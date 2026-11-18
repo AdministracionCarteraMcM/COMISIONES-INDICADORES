@@ -1138,6 +1138,7 @@ export default function App() {
                 filters={filters}
                 role={effectiveSession.role}
                 userNombre={effectiveSession.nombre}
+                metas={data.metas}
               />
             )}
 

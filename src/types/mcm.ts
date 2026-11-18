@@ -240,6 +240,17 @@ export interface FilterState {
   ejecutivo: string;
 }
 
+export interface MetaRow {
+  fecha: string;
+  region?: string;
+  agencia?: string;
+  asesor: string;
+  metaH: number;
+  metaI: number;
+  metaJ: number;
+  metaTotal: number;
+}
+
 export interface PortalSession {
   username: string;
   role: Role;
@@ -276,6 +287,7 @@ export interface RawSpreadsheetData {
   } | null;
   backups: BackupInfo[];
   logs: LogEntry[];
+  metas?: MetaRow[];
   preScoped?: boolean;
   dailyAvailableDates?: string[];
   dailyHistoryLoaded?: boolean;

@@ -44,28 +44,17 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
   const corteLabel = () => {
     if (!cortes.length) return 'Sin cortes';
-    if (filters.selectedCortes.length === 0 || filters.selectedCortes.length === cortes.length) {
-      return `Todos los cortes (${cortes.length})`;
-    }
-    if (filters.selectedCortes.length === 1) {
-      const c = cortes.find((x) => x.CORTE === filters.selectedCortes[0]);
-      return c ? `Sem ${c.SEMANA} · ${shortPeriodo(c.PERIODO)}` : `Corte ${filters.selectedCortes[0]}`;
-    }
-    const sel = cortes
-      .filter((x) => filters.selectedCortes.includes(x.CORTE))
-      .sort((a, b) => a.SEMANA - b.SEMANA);
-    return `${sel.length} semanas (S${sel[0]?.SEMANA}–S${sel[sel.length - 1]?.SEMANA})`;
+    const activeId = filters.selectedCortes[0];
+    const c = cortes.find((x) => x.CORTE === activeId) || sortedCortes[0];
+    return c ? `Sem ${c.SEMANA} · ${shortPeriodo(c.PERIODO)}` : `Corte ${activeId || 'Seleccionado'}`;
   };
 
-  const toggleCorte = (corteId: number) => {
-    const has = filters.selectedCortes.includes(corteId);
-    const next = has
-      ? filters.selectedCortes.filter((id) => id !== corteId)
-      : [...filters.selectedCortes, corteId];
+  const selectCorte = (corteId: number) => {
     onChange({
       ...filters,
-      selectedCortes: next.length ? next : [corteId],
+      selectedCortes: [corteId],
     });
+    setCorteOpen(false);
   };
 
   const hasCustomFilters =
@@ -77,7 +66,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-3.5">
       <div className="flex flex-wrap items-center gap-2.5">
-        {/* Multi-Corte Popover */}
+        {/* Single-Corte Popover */}
         <div className="relative" ref={popRef}>
           <button
             type="button"
@@ -96,49 +85,34 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   type="button"
                   onClick={() => {
                     const last = sortedCortes[0];
-                    if (last) onChange({ ...filters, selectedCortes: [last.CORTE] });
+                    if (last) selectCorte(last.CORTE);
                   }}
-                  className="px-2 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded hover:bg-slate-100 text-slate-700"
+                  className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded hover:bg-slate-100 text-slate-700"
                 >
-                  Último corte
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const last4 = sortedCortes.slice(0, 4).map((c) => c.CORTE);
-                    if (last4.length) onChange({ ...filters, selectedCortes: last4 });
-                  }}
-                  className="px-2 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded hover:bg-slate-100 text-slate-700"
-                >
-                  Últimas 4 semanas
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChange({ ...filters, selectedCortes: allCorteIds })}
-                  className="px-2 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded hover:bg-slate-100 text-slate-700"
-                >
-                  Todas
+                  Último corte (Semana actual)
                 </button>
               </div>
               <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
                 {sortedCortes.map((c) => {
-                  const checked = filters.selectedCortes.includes(c.CORTE);
+                  const selected = filters.selectedCortes[0] === c.CORTE;
                   return (
-                    <label
+                    <button
                       key={c.CORTE}
-                      className="flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer"
+                      type="button"
+                      onClick={() => selectCorte(c.CORTE)}
+                      className={`w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer ${
+                        selected ? 'bg-blue-50/70 font-semibold text-blue-900' : 'text-slate-800'
+                      }`}
                     >
                       <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleCorte(c.CORTE)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        type="radio"
+                        checked={selected}
+                        onChange={() => selectCorte(c.CORTE)}
+                        className="text-blue-600 focus:ring-blue-500"
                       />
-                      <span className="font-semibold text-slate-800 w-14 shrink-0 tabular-nums">
-                        Sem {c.SEMANA}
-                      </span>
+                      <span className="w-14 shrink-0 tabular-nums">Sem {c.SEMANA}</span>
                       <span className="text-slate-500 truncate">{c.PERIODO}</span>
-                    </label>
+                    </button>
                   );
                 })}
               </div>

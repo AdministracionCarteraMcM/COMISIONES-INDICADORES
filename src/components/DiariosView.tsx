@@ -138,16 +138,18 @@ export const DiariosView: React.FC<DiariosViewProps> = ({
       return true;
     });
     const histDates = Array.from(new Set(histRows.map((r) => r.FECHACORTE))).sort();
-    return histDates.map((d) => {
-      const m = computeDailyMetrics(histRows.filter((r) => r.FECHACORTE === d));
-      return {
-        date: d,
-        normalidad: m.normalidad,
-        cobranza: m.cobranza,
-        real: m.real,
-        desembolso: m.desembolso,
-      };
-    });
+    return histDates
+      .map((d) => {
+        const m = computeDailyMetrics(histRows.filter((r) => r.FECHACORTE === d));
+        return {
+          date: d,
+          normalidad: m.normalidad,
+          cobranza: m.cobranza,
+          real: m.real,
+          desembolso: m.desembolso,
+        };
+      })
+      .filter((h) => h.normalidad > 0 || h.cobranza > 0 || h.real > 0 || h.desembolso > 0);
   }, [scopedDailyRows, filteredCurrent, rowsAtDate, selectedDate, region, sucursal, asesor]);
 
   if (!scopedDailyRows.length) {

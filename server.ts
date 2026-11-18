@@ -35,6 +35,8 @@ interface SessionPayload {
   googleEmail?: string;
   mode: 'google_workspace' | 'usuario_interno';
   appsScriptToken?: string;
+  googleAccessToken?: string;
+  googleAccessExp?: number;
   exp: number;
 }
 
@@ -113,7 +115,10 @@ async function getServiceAccountToken(): Promise<string | null> {
   return json.access_token;
 }
 
-async function resolveGoogleAccessToken(bearerFromReq?: string): Promise<string | null> {
+async function resolveGoogleAccessToken(
+  bearerFromReq?: string,
+  session?: SessionPayload | null
+): Promise<string | null> {
   if (bearerFromReq) return bearerFromReq;
   const saToken = await getServiceAccountToken();
   if (saToken) return saToken;
@@ -122,6 +127,13 @@ async function resolveGoogleAccessToken(bearerFromReq?: string): Promise<string 
     Date.now() - adminWorkspaceBridge.setAt < 55 * 60 * 1000
   ) {
     return adminWorkspaceBridge.token;
+  }
+  if (
+    session?.googleAccessToken &&
+    session.googleAccessExp &&
+    Date.now() < session.googleAccessExp
+  ) {
+    return session.googleAccessToken;
   }
   return null;
 }
@@ -222,6 +234,7 @@ const SHEET_NAMES = {
   LOG: 'LOG_ACTUALIZACIONES',
   DIARIOS: 'INDICADORES_DIARIOS',
   NORMALIDAD: 'NORMALIDAD',
+  METAS: 'Metas',
 } as const;
 
 function normText(v: unknown): string {
@@ -417,9 +430,21 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
     }));
 
   const existingTitles = new Set(sheetMeta.map((s) => s.title));
-  const wantedSheets = Object.values(SHEET_NAMES).filter((name) =>
-    existingTitles.has(name)
-  );
+  const metasTitle =
+    Array.from(existingTitles).find((t) => /^metas?$/i.test(t.trim())) ||
+    Array.from(existingTitles).find((t) => /metas/i.test(t)) ||
+    'Metas';
+  const wantedSheets = Object.values(SHEET_NAMES)
+    .map(
+      (name) =>
+        Array.from(existingTitles).find(
+          (t) => t.trim().toUpperCase() === name.trim().toUpperCase()
+        ) || name
+    )
+    .filter((name) => existingTitles.has(name));
+  if (existingTitles.has(metasTitle) && !wantedSheets.includes(metasTitle)) {
+    wantedSheets.push(metasTitle);
+  }
 
   const matrices = new Map<string, Matrix>();
   if (wantedSheets.length) {
@@ -860,6 +885,128 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
     .reverse()
     .slice(0, 120);
 
+  const foundMetasKey =
+    Array.from(matrices.keys()).find((k) => /^metas?$/i.test(k.trim())) ||
+    Array.from(matrices.keys()).find((k) => /metas/i.test(k)) ||
+    metasTitle;
+  const metasMatrix = matrices.get(foundMetasKey) || [];
+  const parseMetaNum = (v: unknown): number => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+    if (v == null || v === '') return 0;
+    const str = String(v)
+      .trim()
+      .replace(/[$MXN\s]/gi, '')
+      .replace(/,/g, '');
+    const n = Number(str);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  let metasHeaderIdx = -1;
+  let colA = 0;
+  let colRegion = -1;
+  let colSucursal = -1;
+  let colD = 3;
+  const colH = 7;
+  const colI = 8;
+  const colJ = 9;
+
+  for (let i = 0; i < Math.min(metasMatrix.length, 10); i++) {
+    const row = metasMatrix[i] || [];
+    const canonCells = row.map((c) => canonHeader(c));
+    const hasKnownHeader = canonCells.some((h) =>
+      [
+        'ASESOR',
+        'EJECUTIVO',
+        'PROMOTOR',
+        'EMPLEADO',
+        'FECHA',
+        'CORTE',
+        'FECHA CORTE',
+        'REGIONAL',
+        'REGION',
+        'SUCURSAL',
+        'AGENCIA',
+      ].includes(h)
+    );
+    if (hasKnownHeader) {
+      metasHeaderIdx = i;
+      canonCells.forEach((h, idx) => {
+        if (h === 'FECHA' || h === 'CORTE' || h === 'FECHA CORTE' || h === 'MES' || h === 'PERIODO') {
+          colA = idx;
+        } else if (h === 'REGION' || h === 'REGIONAL') {
+          colRegion = idx;
+        } else if (h === 'SUCURSAL' || h === 'AGENCIA' || h === 'PLAZA') {
+          colSucursal = idx;
+        } else if (
+          h === 'ASESOR' ||
+          h === 'EJECUTIVO' ||
+          h === 'PROMOTOR' ||
+          h === 'EMPLEADO' ||
+          h === 'NOMBRE'
+        ) {
+          colD = idx;
+        }
+      });
+      break;
+    }
+  }
+
+  // Enrich missing region / sucursal from INDICADORES by ejecutivo
+  const execTerritoryByPk = new Map<string, { region: string; agencia: string }>();
+  indicadores.forEach((r) => {
+    const k = personKey(r.ejecutivo);
+    if (k && (r.region || r.agencia)) {
+      execTerritoryByPk.set(k, { region: r.region, agencia: r.agencia });
+    }
+  });
+
+  const metasStartIdx = metasHeaderIdx >= 0 ? metasHeaderIdx + 1 : 1;
+  const metas = metasMatrix
+    .slice(metasStartIdx)
+    .map((r) => {
+      const rawFecha = r[colA];
+      const fecha = dailyDateKey(rawFecha) || String(rawFecha ?? '').trim();
+      const asesor = normStr(r[colD]);
+      const terr = execTerritoryByPk.get(personKey(asesor));
+      const region =
+        (colRegion >= 0 ? normStr(r[colRegion]) : '') || terr?.region || '';
+      const agencia =
+        (colSucursal >= 0 ? normStr(r[colSucursal]) : '') || terr?.agencia || '';
+      const metaH = parseMetaNum(r[colH]);
+      const metaI = parseMetaNum(r[colI]);
+      const metaJ = parseMetaNum(r[colJ]);
+      return {
+        fecha,
+        region,
+        agencia,
+        asesor,
+        metaH,
+        metaI,
+        metaJ,
+        metaTotal: metaH + metaI + metaJ,
+      };
+    })
+    .filter((m) => {
+      const uAsesor = m.asesor.toUpperCase();
+      const uFecha = m.fecha.toUpperCase();
+      const uReg = (m.region || '').toUpperCase();
+      const uAg = (m.agencia || '').toUpperCase();
+      if (
+        ['ASESOR', 'EJECUTIVO', 'PROMOTOR', 'EMPLEADO'].includes(uAsesor) ||
+        ['FECHA', 'MES', 'PERIODO', 'CORTE'].includes(uFecha) ||
+        /^TOTAL\b/.test(uAsesor) ||
+        /^TOTAL\b/.test(uFecha) ||
+        /^TOTAL\b/.test(uReg) ||
+        /^TOTAL\b/.test(uAg) ||
+        uAsesor === 'SUBTOTAL' ||
+        uAsesor === 'GRAN TOTAL' ||
+        uAsesor === 'PROMEDIO'
+      ) {
+        return false;
+      }
+      return m.metaTotal > 0 || m.asesor !== '';
+    });
+
   return {
     spreadsheetId,
     spreadsheetTitle: meta.properties?.title || 'McM_Datos_DashBoard',
@@ -881,6 +1028,7 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
     normalidadMeta: null,
     backups,
     logs,
+    metas,
   };
 }
 
@@ -1038,13 +1186,29 @@ function scopePayloadForSession(
 
   const isPrivilegedMonthly = role === 'admin' || role === 'directivo' || role === 'direccion';
   const isAdmin = role === 'admin';
+  const scopedIndicadores = scopeWeekly(raw.indicadores);
+  const scopedExecPks = new Set(scopedIndicadores.map((r) => personKey(r.ejecutivo)));
+  const scopedMetas = (() => {
+    const all = raw.metas || [];
+    if (isPrivilegedMonthly) return all;
+    if (role === 'ejecutivo') {
+      return all.filter((m) => personKey(m.asesor) === pk);
+    }
+    return all.filter((m) => {
+      if (m.asesor && scopedExecPks.has(personKey(m.asesor))) return true;
+      if (m.region || m.agencia) {
+        return scopeWeekly([{ region: m.region || '', agencia: m.agencia || '', ejecutivo: m.asesor }]).length > 0;
+      }
+      return false;
+    });
+  })();
 
   return {
     spreadsheetId: raw.spreadsheetId,
     spreadsheetTitle: raw.spreadsheetTitle,
     sheetMeta: isAdmin ? raw.sheetMeta : [],
     cortes: raw.cortes,
-    indicadores: scopeWeekly(raw.indicadores),
+    indicadores: scopedIndicadores,
     ejecutivoCom: scopeWeekly(raw.ejecutivoCom),
     coordinadorCom: role === 'coordinador' || role === 'gerente' || role === 'regional' || isPrivilegedMonthly
       ? scopeDir(raw.coordinadorCom)
@@ -1075,6 +1239,7 @@ function scopePayloadForSession(
     normalidadMeta: null,
     backups: isAdmin ? raw.backups : [],
     logs: isAdmin ? raw.logs : [],
+    metas: scopedMetas,
   };
 }
 
@@ -1421,6 +1586,16 @@ function mapAppsScriptPayloadToPortal(
       normalidadMeta: null,
       backups,
       logs: [],
+      metas: Array.isArray(base.metas)
+        ? (base.metas as Array<Record<string, unknown>>).map((r) => ({
+            fecha: normStr(r.fecha || r.FECHA),
+            asesor: normStr(r.asesor || r.ASESOR || r.ejecutivo),
+            metaH: num(r.metaH ?? r.metah ?? r.meta_h),
+            metaI: num(r.metaI ?? r.metai ?? r.meta_i),
+            metaJ: num(r.metaJ ?? r.metaj ?? r.meta_j),
+            metaTotal: num(r.metaTotal ?? r.meta_total ?? (num(r.metaH) + num(r.metaI) + num(r.metaJ))),
+          }))
+        : [],
       preScoped: true,
     },
   };
@@ -1771,7 +1946,7 @@ async function startServer() {
         typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
           ? authHeader.slice(7).trim()
           : undefined;
-      const token = await resolveGoogleAccessToken(bearer);
+      const token = await resolveGoogleAccessToken(bearer, session);
 
       if (token) {
         const raw = await loadRawSpreadsheet(token, spreadsheetId);
@@ -1926,13 +2101,15 @@ async function startServer() {
         nombre,
         googleEmail: email || undefined,
         mode: 'google_workspace',
+        googleAccessToken: token,
+        googleAccessExp: Date.now() + 50 * 60 * 1000,
         exp: Date.now() + SESSION_TTL_MS,
       };
       const sessionToken = signSessionToken(session);
       setSessionCookie(req, res, sessionToken);
 
       const scopedData = scopePayloadForSession(raw, session);
-      res.json({ ok: true, session, sessionToken, data: scopedData });
+      res.json({ ok: true, session: publicSessionView(session), sessionToken, data: scopedData });
     } catch (err) {
       res.status(500).json({
         ok: false,
@@ -1956,7 +2133,7 @@ async function startServer() {
         typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
           ? authHeader.slice(7).trim()
           : undefined;
-      const token = await resolveGoogleAccessToken(bearer);
+      const token = await resolveGoogleAccessToken(bearer, session);
       if (!token) {
         if (session.appsScriptToken && hasAppsScriptConfigured()) {
           const asResult = await loadViaAppsScript({
@@ -2148,7 +2325,7 @@ async function startServer() {
         typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
           ? authHeader.slice(7).trim()
           : undefined;
-      const token = await resolveGoogleAccessToken(bearer);
+      const token = await resolveGoogleAccessToken(bearer, session);
       if (!token) {
         res.status(401).json({
           ok: false,

@@ -51,6 +51,7 @@ export const SHEET_NAMES = {
   LOG: 'LOG_ACTUALIZACIONES',
   DIARIOS: 'INDICADORES_DIARIOS',
   NORMALIDAD: 'NORMALIDAD',
+  METAS: 'Metas',
 } as const;
 
 class WorkspaceAuthError extends Error {
@@ -255,6 +256,7 @@ function scopeDataClientFallback(
     normalidadMeta: null,
     backups: isAdmin ? raw.backups : [],
     logs: isAdmin ? raw.logs : [],
+    metas: raw.metas || [],
   };
 }
 
@@ -637,6 +639,16 @@ async function appsScriptPortalFallback(params: {
       normalidadMeta: null,
       backups: [],
       logs: [],
+      metas: Array.isArray(base.metas)
+        ? (base.metas as Array<Record<string, unknown>>).map((r) => ({
+            fecha: String(r.fecha || r.FECHA || '').trim(),
+            asesor: String(r.asesor || r.ASESOR || r.ejecutivo || '').trim(),
+            metaH: num(r.metaH ?? r.metah ?? r.meta_h),
+            metaI: num(r.metaI ?? r.metai ?? r.meta_i),
+            metaJ: num(r.metaJ ?? r.metaj ?? r.meta_j),
+            metaTotal: num(r.metaTotal ?? r.meta_total ?? (num(r.metaH) + num(r.metaI) + num(r.metaJ))),
+          }))
+        : [],
       preScoped: true,
     },
   };
@@ -1337,9 +1349,13 @@ export async function loadPortalData(
     }));
 
   const existingTitles = new Set(sheetMeta.map((s) => s.title));
-  const wantedSheets = Object.values(SHEET_NAMES).filter((name) =>
-    existingTitles.has(name)
-  );
+  const metasTitle = Array.from(existingTitles).find((t) => /^metas$/i.test(t)) || 'Metas';
+  const wantedSheets = Object.values(SHEET_NAMES)
+    .map((name) => Array.from(existingTitles).find((t) => t.toUpperCase() === name.toUpperCase()) || name)
+    .filter((name) => existingTitles.has(name));
+  if (existingTitles.has(metasTitle) && !wantedSheets.includes(metasTitle)) {
+    wantedSheets.push(metasTitle);
+  }
 
   const matrices = new Map<string, Matrix>();
   if (wantedSheets.length) {
@@ -1773,6 +1789,61 @@ export async function loadPortalData(
     .reverse()
     .slice(0, 120);
 
+  const foundMetasKey = Array.from(matrices.keys()).find((k) => /^metas$/i.test(k.trim())) || metasTitle;
+  const metasMatrix = matrices.get(foundMetasKey) || [];
+  const parseMetaNum = (v: unknown): number => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+    if (v == null || v === '') return 0;
+    const str = String(v).trim().replace(/[$ ]/g, '').replace(/,/g, '');
+    const n = Number(str);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  let metasHeaderIdx = -1;
+  let colA = 0;
+  let colD = 3;
+  let colH = 7;
+  let colI = 8;
+  let colJ = 9;
+
+  for (let i = 0; i < Math.min(metasMatrix.length, 10); i++) {
+    const row = metasMatrix[i] || [];
+    const textJoin = row.map((c) => String(c ?? '').toUpperCase()).join(' ');
+    if (textJoin.includes('ASESOR') || textJoin.includes('EJECUTIVO') || textJoin.includes('META')) {
+      metasHeaderIdx = i;
+      row.forEach((cell, idx) => {
+        const h = canonHeader(cell);
+        if (h === 'FECHA' || h === 'CORTE' || h === 'FECHA CORTE') colA = idx;
+        else if (h === 'ASESOR' || h === 'EJECUTIVO' || h === 'PROMOTOR' || h === 'EMPLEADO') colD = idx;
+      });
+      break;
+    }
+  }
+
+  const metasStartIdx = metasHeaderIdx >= 0 ? metasHeaderIdx + 1 : 1;
+  const metas = metasMatrix
+    .slice(metasStartIdx)
+    .map((r) => {
+      const fecha = dailyDateKey(r[colA]) || String(r[colA] ?? '').trim();
+      const asesor = normStr(r[colD]);
+      const metaH = parseMetaNum(r[colH]);
+      const metaI = parseMetaNum(r[colI]);
+      const metaJ = parseMetaNum(r[colJ]);
+      return {
+        fecha,
+        asesor,
+        metaH,
+        metaI,
+        metaJ,
+        metaTotal: metaH + metaI + metaJ,
+      };
+    })
+    .filter((m) => {
+      if (!m.asesor) return false;
+      const upper = m.asesor.toUpperCase();
+      return upper !== 'ASESOR' && upper !== 'EJECUTIVO' && upper !== 'TOTAL' && upper !== 'PROMEDIO';
+    });
+
   return {
     spreadsheetId,
     spreadsheetTitle: meta.properties?.title || 'McM_Datos_DashBoard',
@@ -1794,6 +1865,7 @@ export async function loadPortalData(
     normalidadMeta,
     backups,
     logs,
+    metas,
   };
 }
 
