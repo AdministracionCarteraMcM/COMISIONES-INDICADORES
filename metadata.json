@@ -1,0 +1,6 @@
+{
+  "name": "Indicadores McM",
+  "description": "Portal ejecutivo de indicadores, cobranza, colocación, comisiones y reportes mensuales conectado a Google Sheets y Google Drive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
