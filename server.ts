@@ -189,8 +189,45 @@ function synthesizeNovemberMetas(
   });
 }
 
+interface ServiceAccountConfig {
+  client_email: string;
+  private_key: string;
+  token_uri?: string;
+}
+
+function parseServiceAccountConfig(): ServiceAccountConfig | null {
+  let raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim();
+  if (!raw) return null;
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    raw = raw.slice(1, -1).trim();
+  }
+  const tryParse = (text: string): ServiceAccountConfig | null => {
+    try {
+      const parsed = JSON.parse(text) as Partial<ServiceAccountConfig>;
+      if (parsed && typeof parsed.client_email === 'string' && typeof parsed.private_key === 'string') {
+        return {
+          client_email: parsed.client_email.trim(),
+          private_key: parsed.private_key.replace(/\\n/g, '\n'),
+          token_uri: parsed.token_uri?.trim() || undefined,
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(raw);
+  if (direct) return direct;
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    return tryParse(decoded);
+  } catch {
+    return null;
+  }
+}
+
 function hasServiceAccountConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim());
+  return Boolean(parseServiceAccountConfig());
 }
 
 function hasAppsScriptConfigured(): boolean {
@@ -209,16 +246,11 @@ function publicSessionView(s: SessionPayload) {
 }
 
 async function getServiceAccountToken(): Promise<string | null> {
-  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
-  if (!rawJson) return null;
+  const sa = parseServiceAccountConfig();
+  if (!sa) return null;
   if (saTokenCache && Date.now() < saTokenCache.exp - 60_000) {
     return saTokenCache.token;
   }
-  const sa = JSON.parse(rawJson) as {
-    client_email: string;
-    private_key: string;
-    token_uri?: string;
-  };
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString(
     'base64url'
@@ -2181,24 +2213,55 @@ async function loadViaAppsScriptExtras(token: string, role: Role) {
 
 /* ==================== EXPRESS APP ==================== */
 
+type RawSpreadsheetPayload = Awaited<ReturnType<typeof loadRawSpreadsheet>>;
+const RAW_SHEET_CACHE_TTL_MS = 60_000;
+const rawSheetCache = new Map<string, { data: RawSpreadsheetPayload; fetchedAt: number }>();
+const rawSheetInFlight = new Map<string, Promise<RawSpreadsheetPayload>>();
+
+function invalidateRawSheetCache(spreadsheetId?: string): void {
+  if (spreadsheetId) {
+    rawSheetCache.delete(spreadsheetId);
+  } else {
+    rawSheetCache.clear();
+  }
+}
+
+async function loadRawSpreadsheetCached(
+  token: string,
+  spreadsheetId: string,
+  forceFresh = false
+): Promise<RawSpreadsheetPayload> {
+  if (!forceFresh) {
+    const hit = rawSheetCache.get(spreadsheetId);
+    if (hit && Date.now() - hit.fetchedAt < RAW_SHEET_CACHE_TTL_MS) {
+      return hit.data;
+    }
+    const existingPromise = rawSheetInFlight.get(spreadsheetId);
+    if (existingPromise) {
+      return existingPromise;
+    }
+  }
+  const p = loadRawSpreadsheet(token, spreadsheetId)
+    .then((data) => {
+      rawSheetCache.set(spreadsheetId, { data, fetchedAt: Date.now() });
+      return data;
+    })
+    .finally(() => {
+      rawSheetInFlight.delete(spreadsheetId);
+    });
+  rawSheetInFlight.set(spreadsheetId, p);
+  return p;
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
 
   app.get('/api/health', async (_req: Request, res: Response) => {
-    const hasSa = hasServiceAccountConfigured();
+    const saCfg = parseServiceAccountConfig();
+    const hasSa = Boolean(saCfg);
     const hasAs = hasAppsScriptConfigured();
-    let serviceAccountEmail = '';
-    if (hasSa) {
-      try {
-        const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '{}') as {
-          client_email?: string;
-        };
-        serviceAccountEmail = String(parsed.client_email || '');
-      } catch {
-        serviceAccountEmail = '';
-      }
-    }
+    const serviceAccountEmail = saCfg?.client_email || '';
     const hasBridge =
       Boolean(adminWorkspaceBridge) &&
       Date.now() - (adminWorkspaceBridge?.setAt || 0) < 55 * 60 * 1000;
@@ -2246,7 +2309,7 @@ async function startServer() {
       const token = await resolveGoogleAccessToken(bearer);
 
       if (token) {
-        const raw = await loadRawSpreadsheet(token, spreadsheetId);
+        const raw = await loadRawSpreadsheetCached(token, spreadsheetId);
         const user = raw.usuarios.find(
           (u) =>
             u.username === username &&
@@ -2351,12 +2414,12 @@ async function startServer() {
 
       // Read spreadsheet with user's token if they have access, else service account
       const saToken = await getServiceAccountToken();
-      let raw: Awaited<ReturnType<typeof loadRawSpreadsheet>>;
+      let raw: RawSpreadsheetPayload;
       try {
-        raw = await loadRawSpreadsheet(token, spreadsheetId);
+        raw = await loadRawSpreadsheetCached(token, spreadsheetId, true);
       } catch (err) {
         if (saToken) {
-          raw = await loadRawSpreadsheet(saToken, spreadsheetId);
+          raw = await loadRawSpreadsheetCached(saToken, spreadsheetId, true);
         } else {
           throw err;
         }
@@ -2455,7 +2518,8 @@ async function startServer() {
         return;
       }
 
-      const raw = await loadRawSpreadsheet(token, spreadsheetId);
+      const forceFresh = session.role === 'admin' || session.mode === 'google_workspace';
+      const raw = await loadRawSpreadsheetCached(token, spreadsheetId, forceFresh);
       let effectiveSession = session;
       if (session.mode === 'usuario_interno') {
         const liveUser = raw.usuarios.find((u) => u.username === session.username);
@@ -2681,6 +2745,9 @@ async function startServer() {
         },
         body: method === 'GET' || bodyPayload === undefined ? undefined : String(bodyPayload),
       });
+      if (method !== 'GET' && googleRes.ok) {
+        invalidateRawSheetCache();
+      }
       const text = await googleRes.text();
       res.status(googleRes.status).type('application/json').send(text);
     } catch (err) {
