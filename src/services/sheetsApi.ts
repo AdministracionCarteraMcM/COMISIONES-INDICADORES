@@ -20,6 +20,7 @@ import {
   formatPeriodo,
   isCurrentStaffRow,
   lastDayOfMonth,
+  normText,
   nrmMonthKeyFromCut,
   nullableNum,
   num,
@@ -322,6 +323,17 @@ async function directGoogleLoginFallback(
       `La cuenta ${email || 'Google'} no tiene permisos de Administrador ni está registrada en USUARIOS.`,
       403
     );
+  }
+
+  if (canEditMasterSheet && raw.metas && raw.metas.length > 0) {
+    fetch('/api/portal/sync-metas', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${googleAccessToken}`,
+      },
+      body: JSON.stringify({ spreadsheetId, metas: raw.metas }),
+    }).catch(() => {});
   }
 
   setMcMSessionToken(null);
@@ -640,14 +652,22 @@ async function appsScriptPortalFallback(params: {
       backups: [],
       logs: [],
       metas: Array.isArray(base.metas)
-        ? (base.metas as Array<Record<string, unknown>>).map((r) => ({
-            fecha: String(r.fecha || r.FECHA || '').trim(),
-            asesor: String(r.asesor || r.ASESOR || r.ejecutivo || '').trim(),
-            metaH: num(r.metaH ?? r.metah ?? r.meta_h),
-            metaI: num(r.metaI ?? r.metai ?? r.meta_i),
-            metaJ: num(r.metaJ ?? r.metaj ?? r.meta_j),
-            metaTotal: num(r.metaTotal ?? r.meta_total ?? (num(r.metaH) + num(r.metaI) + num(r.metaJ))),
-          }))
+        ? (base.metas as Array<Record<string, unknown>>).map((r) => {
+            const metaH = num(r.metaH ?? r.metah ?? r.meta_h);
+            const metaI = num(r.metaI ?? r.metai ?? r.meta_i);
+            const metaJ = num(r.metaJ ?? r.metaj ?? r.meta_j);
+            const metaSumHI = metaH + metaI;
+            return {
+              fecha: String(r.fecha || r.FECHA || '').trim(),
+              region: String(r.region || r.REGION || '').trim() || undefined,
+              agencia: String(r.agencia || r.SUCURSAL || r.AGENCIA || '').trim() || undefined,
+              asesor: String(r.asesor || r.ASESOR || r.ejecutivo || '').trim(),
+              metaH,
+              metaI,
+              metaJ,
+              metaTotal: metaSumHI > 0 ? metaSumHI : num(r.metaTotal ?? r.meta_total ?? metaJ),
+            };
+          })
         : [],
       preScoped: true,
     },
@@ -1349,9 +1369,17 @@ export async function loadPortalData(
     }));
 
   const existingTitles = new Set(sheetMeta.map((s) => s.title));
-  const metasTitle = Array.from(existingTitles).find((t) => /^metas$/i.test(t)) || 'Metas';
+  const metasTitle =
+    Array.from(existingTitles).find((t) => /^metas?$/i.test(t.trim())) ||
+    Array.from(existingTitles).find((t) => /metas/i.test(t)) ||
+    'Metas';
   const wantedSheets = Object.values(SHEET_NAMES)
-    .map((name) => Array.from(existingTitles).find((t) => t.toUpperCase() === name.toUpperCase()) || name)
+    .map(
+      (name) =>
+        Array.from(existingTitles).find(
+          (t) => t.trim().toUpperCase() === name.trim().toUpperCase()
+        ) || name
+    )
     .filter((name) => existingTitles.has(name));
   if (existingTitles.has(metasTitle) && !wantedSheets.includes(metasTitle)) {
     wantedSheets.push(metasTitle);
@@ -1789,59 +1817,164 @@ export async function loadPortalData(
     .reverse()
     .slice(0, 120);
 
-  const foundMetasKey = Array.from(matrices.keys()).find((k) => /^metas$/i.test(k.trim())) || metasTitle;
+  const foundMetasKey =
+    Array.from(matrices.keys()).find((k) => /^metas?$/i.test(k.trim())) ||
+    Array.from(matrices.keys()).find((k) => /metas/i.test(k)) ||
+    metasTitle;
   const metasMatrix = matrices.get(foundMetasKey) || [];
   const parseMetaNum = (v: unknown): number => {
     if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
     if (v == null || v === '') return 0;
-    const str = String(v).trim().replace(/[$ ]/g, '').replace(/,/g, '');
+    const str = String(v)
+      .trim()
+      .replace(/[$MXN\s]/gi, '')
+      .replace(/,/g, '');
     const n = Number(str);
     return Number.isFinite(n) ? n : 0;
   };
 
   let metasHeaderIdx = -1;
   let colA = 0;
+  let colRegion = -1;
+  let colSucursal = -1;
   let colD = 3;
-  let colH = 7;
-  let colI = 8;
-  let colJ = 9;
+  const colH = 7;
+  const colI = 8;
+  const colJ = 9;
 
   for (let i = 0; i < Math.min(metasMatrix.length, 10); i++) {
     const row = metasMatrix[i] || [];
-    const textJoin = row.map((c) => String(c ?? '').toUpperCase()).join(' ');
-    if (textJoin.includes('ASESOR') || textJoin.includes('EJECUTIVO') || textJoin.includes('META')) {
+    const canonCells = row.map((c) => canonHeader(c));
+    const hasKnownHeader = canonCells.some((h) =>
+      [
+        'ASESOR',
+        'EJECUTIVO',
+        'PROMOTOR',
+        'EMPLEADO',
+        'FECHA',
+        'CORTE',
+        'FECHA CORTE',
+        'REGIONAL',
+        'REGION',
+        'SUCURSAL',
+        'AGENCIA',
+      ].includes(h)
+    );
+    if (hasKnownHeader) {
       metasHeaderIdx = i;
-      row.forEach((cell, idx) => {
-        const h = canonHeader(cell);
-        if (h === 'FECHA' || h === 'CORTE' || h === 'FECHA CORTE') colA = idx;
-        else if (h === 'ASESOR' || h === 'EJECUTIVO' || h === 'PROMOTOR' || h === 'EMPLEADO') colD = idx;
+      let exactAsesorCol = -1;
+      let fallbackNombreCol = -1;
+      canonCells.forEach((h, idx) => {
+        if (h === 'FECHA' || h === 'CORTE' || h === 'FECHA CORTE' || h === 'MES' || h === 'PERIODO') {
+          colA = idx;
+        } else if (h === 'REGION' || h === 'REGIONAL') {
+          colRegion = idx;
+        } else if (h === 'SUCURSAL' || h === 'AGENCIA' || h === 'PLAZA') {
+          colSucursal = idx;
+        } else if (h === 'ASESOR' || h === 'EJECUTIVO' || h === 'PROMOTOR') {
+          if (exactAsesorCol < 0 || idx === 3) exactAsesorCol = idx;
+        } else if (h === 'EMPLEADO' || h === 'NOMBRE') {
+          if (fallbackNombreCol < 0 || idx === 3) fallbackNombreCol = idx;
+        }
       });
+      if (exactAsesorCol >= 0) colD = exactAsesorCol;
+      else if (fallbackNombreCol >= 0) colD = fallbackNombreCol;
       break;
     }
   }
 
+  const sortedWords = (v: unknown) =>
+    normText(v)
+      .replace(/[^A-Z0-9\s]/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .sort()
+      .join('|');
+
+  // Enrich missing region / sucursal from INDICADORES, EJECUTIVO, and DIARIOS
+  const execTerritoryByPk = new Map<string, { region: string; agencia: string }>();
+  const execTerritoryByWords = new Map<string, { region: string; agencia: string }>();
+  const knownRegions = new Set<string>();
+  const knownAgencias = new Set<string>();
+
+  const registerExecTerr = (name: string, reg: string, ag: string) => {
+    const r = normStr(reg);
+    const a = normStr(ag);
+    if (r) knownRegions.add(normText(r));
+    if (a) knownAgencias.add(normText(a));
+    const k = personKey(name);
+    const wk = sortedWords(name);
+    if (k && (r || a)) execTerritoryByPk.set(k, { region: r, agencia: a });
+    if (wk && (r || a)) execTerritoryByWords.set(wk, { region: r, agencia: a });
+  };
+
+  diarios.forEach((r) =>
+    registerExecTerr(String(r.ASESOR || ''), String(r.REGIONAL || ''), String(r.SUCURSAL || ''))
+  );
+  ejecutivoCom.forEach((r) => registerExecTerr(r.ejecutivo, r.region, r.agencia));
+  indicadores.forEach((r) => registerExecTerr(r.ejecutivo, r.region, r.agencia));
+
   const metasStartIdx = metasHeaderIdx >= 0 ? metasHeaderIdx + 1 : 1;
+  let lastMetaFecha = '';
   const metas = metasMatrix
     .slice(metasStartIdx)
     .map((r) => {
-      const fecha = dailyDateKey(r[colA]) || String(r[colA] ?? '').trim();
+      const rawFecha = r[colA];
+      let fecha = dailyDateKey(rawFecha) || String(rawFecha ?? '').trim();
       const asesor = normStr(r[colD]);
+      if (fecha) {
+        lastMetaFecha = fecha;
+      } else if (asesor && lastMetaFecha) {
+        fecha = lastMetaFecha;
+      }
+      const terr =
+        execTerritoryByPk.get(personKey(asesor)) ||
+        execTerritoryByWords.get(sortedWords(asesor));
+      const rawReg = colRegion >= 0 ? normStr(r[colRegion]) : '';
+      const rawAg = colSucursal >= 0 ? normStr(r[colSucursal]) : '';
+      const region =
+        (rawReg && (knownRegions.size === 0 || knownRegions.has(normText(rawReg))) ? rawReg : '') ||
+        terr?.region ||
+        rawReg;
+      const agencia =
+        (rawAg && (knownAgencias.size === 0 || knownAgencias.has(normText(rawAg))) ? rawAg : '') ||
+        terr?.agencia ||
+        rawAg;
       const metaH = parseMetaNum(r[colH]);
       const metaI = parseMetaNum(r[colI]);
       const metaJ = parseMetaNum(r[colJ]);
+      const metaSumHI = metaH + metaI;
       return {
         fecha,
+        region: region || undefined,
+        agencia: agencia || undefined,
         asesor,
         metaH,
         metaI,
         metaJ,
-        metaTotal: metaH + metaI + metaJ,
+        metaTotal: metaSumHI > 0 ? metaSumHI : metaJ,
       };
     })
     .filter((m) => {
-      if (!m.asesor) return false;
-      const upper = m.asesor.toUpperCase();
-      return upper !== 'ASESOR' && upper !== 'EJECUTIVO' && upper !== 'TOTAL' && upper !== 'PROMEDIO';
+      const uAsesor = m.asesor.toUpperCase();
+      const uFecha = m.fecha.toUpperCase();
+      const uReg = (m.region || '').toUpperCase();
+      const uAg = (m.agencia || '').toUpperCase();
+      if (
+        ['ASESOR', 'EJECUTIVO', 'PROMOTOR', 'EMPLEADO'].includes(uAsesor) ||
+        ['FECHA', 'MES', 'PERIODO', 'CORTE'].includes(uFecha) ||
+        /^TOTAL\b/.test(uAsesor) ||
+        /^TOTAL\b/.test(uFecha) ||
+        /^TOTAL\b/.test(uReg) ||
+        /^TOTAL\b/.test(uAg) ||
+        uAsesor === 'SUBTOTAL' ||
+        uAsesor === 'GRAN TOTAL' ||
+        uAsesor === 'PROMEDIO'
+      ) {
+        return false;
+      }
+      return m.metaTotal > 0 || m.asesor !== '';
     });
 
   return {

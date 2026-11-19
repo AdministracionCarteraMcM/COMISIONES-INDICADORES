@@ -45,7 +45,11 @@ import {
 } from './services/sheetsApi';
 import {
   dailyDateKey,
+  dailyRegionScopeKey,
+  normText,
   personKey,
+  regionDisplayName,
+  regionMatchesFilter,
   scopeDailyRows,
   scopeDirectorioRows,
   scopeWeeklyRows,
@@ -643,18 +647,80 @@ export default function App() {
     [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]
   );
 
+  const scopedMetas = useMemo(() => {
+    if (!data?.metas) return data?.metas;
+    const role = effectiveSession.role;
+    if (role === 'admin' || role === 'directivo' || role === 'direccion') {
+      return data.metas;
+    }
+    if (data.preScoped && !isSimulatingRole) {
+      return data.metas;
+    }
+    const pk = personKey(effectiveSession.nombre);
+    const sortWords = (v: unknown) =>
+      normText(v)
+        .replace(/[^A-Z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .sort()
+        .join(' ');
+    const pkWords = sortWords(effectiveSession.nombre);
+    if (role === 'ejecutivo') {
+      return data.metas.filter((m) => {
+        const mk = personKey(m.asesor);
+        const mw = sortWords(m.asesor);
+        return mk === pk || (pkWords !== '' && mw === pkWords);
+      });
+    }
+    const scopedExecPks = new Set(scopedIndicadores.map((r) => personKey(r.ejecutivo)).filter(Boolean));
+    const scopedExecWords = new Set(scopedIndicadores.map((r) => sortWords(r.ejecutivo)).filter(Boolean));
+    const allowedRegions = new Set(
+      [
+        ...scopedIndicadores.map((r) => dailyRegionScopeKey(r.region)),
+        ...(role === 'regional'
+          ? scopes.regional
+              .filter((s) => personKey(s.persona) === pk || (pkWords !== '' && sortWords(s.persona) === pkWords))
+              .map((s) => dailyRegionScopeKey(s.region))
+          : []),
+      ].filter(Boolean)
+    );
+    const allowedAgencies = new Set(scopedIndicadores.map((r) => normText(r.agencia)).filter(Boolean));
+    const terrByPk = new Map<string, { region: string; agencia: string }>();
+    data.indicadores.forEach((r) => {
+      const k = personKey(r.ejecutivo);
+      if (k && (r.region || r.agencia)) {
+        terrByPk.set(k, { region: r.region || '', agencia: r.agencia || '' });
+      }
+    });
+    return data.metas.filter((m) => {
+      const mk = personKey(m.asesor);
+      const mw = sortWords(m.asesor);
+      if (m.asesor && (scopedExecPks.has(mk) || (mw && scopedExecWords.has(mw)))) return true;
+      const terr = terrByPk.get(mk);
+      const reg = m.region || terr?.region || '';
+      const ag = m.agencia || terr?.agencia || '';
+      if (role === 'regional') {
+        return Boolean(reg && allowedRegions.has(dailyRegionScopeKey(reg)));
+      }
+      return Boolean(ag && allowedAgencies.has(normText(ag)));
+    });
+  }, [data, scopedIndicadores, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]);
+
   const filterOptions = useMemo(() => {
     const src =
       activeTab === 'comisiones' ? scopedEjecutivoCom : scopedIndicadores;
-    const regionSet = new Set<string>(src.map((r) => r.region).filter(Boolean));
+    const regionSet = new Set<string>();
+    src.map((r) => r.region).filter(Boolean).forEach((reg) => {
+      regionSet.add(regionDisplayName(reg));
+    });
     scopedDirectorioCom.forEach((d) => {
-      if (d.region) regionSet.add(d.region);
+      if (d.region) regionSet.add(regionDisplayName(d.region));
     });
     const regions = Array.from(regionSet).sort();
     const agencies = Array.from(
       new Set(
         src
-          .filter((r) => filters.region === 'ALL' || r.region === filters.region)
+          .filter((r) => regionMatchesFilter(r.region, filters.region))
           .map((r) => r.agencia)
           .filter(Boolean)
       )
@@ -1138,7 +1204,7 @@ export default function App() {
                 filters={filters}
                 role={effectiveSession.role}
                 userNombre={effectiveSession.nombre}
-                metas={data.metas}
+                metas={scopedMetas}
               />
             )}
 

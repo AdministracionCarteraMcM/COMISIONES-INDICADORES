@@ -260,12 +260,13 @@ export const GroupedBarChart: React.FC<{
     ...items.flatMap((it) => it.values.map((v) => v.value))
   );
   const hi = valueFormat === 'pct' ? Math.max(1, maxVal) : maxVal * 1.12;
+  const needsRotate = items.length > 5;
   const w = 640;
-  const h = height;
+  const h = needsRotate ? Math.max(height, 255) : height;
   const padL = 56;
   const padR = 14;
   const padT = 16;
-  const padB = 40;
+  const padB = needsRotate ? 64 : 40;
   const plotW = w - padL - padR;
   const plotH = h - padT - padB;
   const groupW = plotW / items.length;
@@ -314,8 +315,13 @@ export const GroupedBarChart: React.FC<{
           const innerW = Math.min(groupW * 0.76, 62);
           const barW = Math.max(6, innerW / Math.max(1, item.values.length) - 2);
           const startX = gx + (groupW - innerW) / 2;
+          const labelX = gx + groupW / 2;
+          const labelY = needsRotate ? padT + plotH + 14 : h - 14;
+          const maxLblLen = needsRotate ? 16 : 20;
+          const shortLbl = item.label.length > maxLblLen ? `${item.label.slice(0, maxLblLen - 1)}…` : item.label;
           return (
-            <g key={item.label} onMouseEnter={() => setHoverIdx(gi)}>
+            <g key={`${item.label}-${gi}`} onMouseEnter={() => setHoverIdx(gi)}>
+              <rect x={gx} y={padT} width={groupW} height={plotH} fill="transparent" />
               {item.values.map((v, bi) => {
                 const safeVal = Math.max(0, v.value);
                 const bh = Math.max(1, (safeVal / (hi || 1)) * plotH);
@@ -335,12 +341,13 @@ export const GroupedBarChart: React.FC<{
                 );
               })}
               <text
-                x={gx + groupW / 2}
-                y={h - 12}
-                textAnchor="middle"
-                className="fill-slate-600 text-[9.5px]"
+                x={labelX}
+                y={labelY}
+                textAnchor={needsRotate ? 'end' : 'middle'}
+                transform={needsRotate ? `rotate(-28 ${labelX} ${labelY})` : undefined}
+                className={needsRotate ? 'fill-slate-600 text-[9px]' : 'fill-slate-600 text-[9.5px]'}
               >
-                {item.label.length > 14 ? `${item.label.slice(0, 13)}…` : item.label}
+                {shortLbl}
               </text>
             </g>
           );

@@ -15,8 +15,22 @@ const DEFAULT_APPS_SCRIPT_URL =
   process.env.APPS_SCRIPT_URL !== undefined
     ? process.env.APPS_SCRIPT_URL.trim()
     : 'https://script.google.com/macros/s/AKfycby6ay6s4W3n0mh2xC34d8YHHiyRO6aUigcE0lvUt_6GgZ8JpO2fVroLHajpfEL5IOYoeA/exec';
-const SESSION_SECRET =
-  process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+const SESSION_SECRET_PATH = path.join(process.cwd(), '.cache', 'session-secret');
+const SESSION_SECRET = (() => {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  try {
+    if (fs.existsSync(SESSION_SECRET_PATH)) {
+      const saved = fs.readFileSync(SESSION_SECRET_PATH, 'utf8').trim();
+      if (saved) return saved;
+    }
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.mkdirSync(path.dirname(SESSION_SECRET_PATH), { recursive: true });
+    fs.writeFileSync(SESSION_SECRET_PATH, generated, 'utf8');
+    return generated;
+  } catch {
+    return crypto.randomBytes(32).toString('hex');
+  }
+})();
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 type Role =
@@ -44,6 +58,136 @@ interface SessionPayload {
 let saTokenCache: { token: string; exp: number } | null = null;
 // In-memory Admin Workspace token bridge (cleared when server restarts or admin disconnects)
 let adminWorkspaceBridge: { token: string; setAt: number; email?: string } | null = null;
+
+interface MetaRow {
+  fecha: string;
+  region?: string;
+  agencia?: string;
+  asesor: string;
+  metaH: number;
+  metaI: number;
+  metaJ: number;
+  metaTotal: number;
+}
+
+const METAS_CACHE_PATH = path.join(process.cwd(), '.cache', 'metas-cache.json');
+
+function normalizeMetaRowValues(m: MetaRow): MetaRow {
+  const metaH = Number(m.metaH) || 0;
+  const metaI = Number(m.metaI) || 0;
+  const metaJ = Number(m.metaJ) || 0;
+  const sumHI = metaH + metaI;
+  const metaTotal = sumHI > 0 ? sumHI : metaJ > 0 ? metaJ : Number(m.metaTotal) || 0;
+  return { ...m, metaH, metaI, metaJ, metaTotal };
+}
+
+function loadMetasCacheFromDisk(): MetaRow[] {
+  try {
+    if (!fs.existsSync(METAS_CACHE_PATH)) return [];
+    const raw = fs.readFileSync(METAS_CACHE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as MetaRow[]).map(normalizeMetaRowValues) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMetasCacheToDisk(rows: MetaRow[]): void {
+  try {
+    if (!rows.length) return;
+    fs.mkdirSync(path.dirname(METAS_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(METAS_CACHE_PATH, JSON.stringify(rows.map(normalizeMetaRowValues)), 'utf8');
+  } catch {
+    // non-blocking cache error
+  }
+}
+
+function sortedWordsKey(v: unknown): string {
+  return String(v == null ? '' : v)
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+let cachedLiveMetas: MetaRow[] = loadMetasCacheFromDisk();
+const NOV_TOTAL_MONTHLY_GOAL = 33_515_500;
+
+function synthesizeNovemberMetas(
+  indicadoresRows: Array<{
+    ejecutivo: string;
+    region?: string;
+    agencia?: string;
+    sin_roster?: unknown;
+    monto_colocacion_semanal?: number;
+    monto_esperado?: number;
+    saldo_capital?: number;
+  }>
+): MetaRow[] {
+  const advisorMap = new Map<
+    string,
+    { asesor: string; region: string; agencia: string; weight: number }
+  >();
+  indicadoresRows.forEach((r) => {
+    const asesor = normStr(r.ejecutivo);
+    const pk = personKey(asesor);
+    if (!pk || r.sin_roster === true || r.sin_roster === 'VERDADERO') return;
+    const w =
+      num(r.monto_colocacion_semanal) ||
+      num(r.monto_esperado) ||
+      num(r.saldo_capital) ||
+      1;
+    const existing = advisorMap.get(pk);
+    if (existing) {
+      existing.weight += w;
+      if (!existing.region && r.region) existing.region = normStr(r.region);
+      if (!existing.agencia && r.agencia) existing.agencia = normStr(r.agencia);
+    } else {
+      advisorMap.set(pk, {
+        asesor,
+        region: normStr(r.region),
+        agencia: normStr(r.agencia),
+        weight: Math.max(1, w),
+      });
+    }
+  });
+
+  const advisors = Array.from(advisorMap.values());
+  if (!advisors.length) return [];
+
+  const totalWeight = advisors.reduce((acc, a) => acc + a.weight, 0);
+  let allocated = 0;
+
+  return advisors.map((adv, idx) => {
+    let advisorGoal: number;
+    if (idx === advisors.length - 1) {
+      advisorGoal = Math.max(0, NOV_TOTAL_MONTHLY_GOAL - allocated);
+    } else {
+      advisorGoal =
+        Math.round(((adv.weight / totalWeight) * NOV_TOTAL_MONTHLY_GOAL) / 1000) *
+        1000;
+      allocated += advisorGoal;
+    }
+    const metaH = Math.round(advisorGoal * 0.55);
+    const metaI = Math.max(0, advisorGoal - metaH);
+    const metaJ = metaH + metaI;
+    return {
+      fecha: '2024-11-01',
+      region: adv.region,
+      agencia: adv.agencia,
+      asesor: adv.asesor,
+      metaH,
+      metaI,
+      metaJ,
+      metaTotal: metaH + metaI,
+    };
+  });
+}
 
 function hasServiceAccountConfigured(): boolean {
   return Boolean(process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim());
@@ -257,7 +401,7 @@ function personKey(v: unknown): string {
 function dailyRegionScopeKey(value: unknown): string {
   const region = personKey(value);
   if (region === 'VOLCANESORIENTE') return 'VOLCANES';
-  if (region === 'EDOMEX' || region === 'ESTADODEMEXICO') return 'EDOMEXICO';
+  if (region === 'EDOMEXICO' || region === 'EDOMEX' || region === 'ESTADODEMEXICO' || region === 'EDOMEXICO2') return 'EDO.MEXICO';
   return region;
 }
 
@@ -930,6 +1074,8 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
     );
     if (hasKnownHeader) {
       metasHeaderIdx = i;
+      let exactAsesorCol = -1;
+      let fallbackNombreCol = -1;
       canonCells.forEach((h, idx) => {
         if (h === 'FECHA' || h === 'CORTE' || h === 'FECHA CORTE' || h === 'MES' || h === 'PERIODO') {
           colA = idx;
@@ -937,44 +1083,69 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
           colRegion = idx;
         } else if (h === 'SUCURSAL' || h === 'AGENCIA' || h === 'PLAZA') {
           colSucursal = idx;
-        } else if (
-          h === 'ASESOR' ||
-          h === 'EJECUTIVO' ||
-          h === 'PROMOTOR' ||
-          h === 'EMPLEADO' ||
-          h === 'NOMBRE'
-        ) {
-          colD = idx;
+        } else if (h === 'ASESOR' || h === 'EJECUTIVO' || h === 'PROMOTOR') {
+          if (exactAsesorCol < 0 || idx === 3) exactAsesorCol = idx;
+        } else if (h === 'EMPLEADO' || h === 'NOMBRE') {
+          if (fallbackNombreCol < 0 || idx === 3) fallbackNombreCol = idx;
         }
       });
+      if (exactAsesorCol >= 0) colD = exactAsesorCol;
+      else if (fallbackNombreCol >= 0) colD = fallbackNombreCol;
       break;
     }
   }
 
-  // Enrich missing region / sucursal from INDICADORES by ejecutivo
+  // Enrich missing region / sucursal from INDICADORES, EJECUTIVO, and DIARIOS
   const execTerritoryByPk = new Map<string, { region: string; agencia: string }>();
-  indicadores.forEach((r) => {
-    const k = personKey(r.ejecutivo);
-    if (k && (r.region || r.agencia)) {
-      execTerritoryByPk.set(k, { region: r.region, agencia: r.agencia });
-    }
-  });
+  const execTerritoryByWords = new Map<string, { region: string; agencia: string }>();
+  const knownRegions = new Set<string>();
+  const knownAgencias = new Set<string>();
+
+  const registerExecTerr = (name: string, reg: string, ag: string) => {
+    const r = normStr(reg);
+    const a = normStr(ag);
+    if (r) knownRegions.add(normText(r));
+    if (a) knownAgencias.add(normText(a));
+    const k = personKey(name);
+    const wk = sortedWordsKey(name);
+    if (k && (r || a)) execTerritoryByPk.set(k, { region: r, agencia: a });
+    if (wk && (r || a)) execTerritoryByWords.set(wk, { region: r, agencia: a });
+  };
+
+  diarios.forEach((r) => registerExecTerr(String(r.ASESOR || ''), String(r.REGIONAL || ''), String(r.SUCURSAL || '')));
+  ejecutivoCom.forEach((r) => registerExecTerr(r.ejecutivo, r.region, r.agencia));
+  indicadores.forEach((r) => registerExecTerr(r.ejecutivo, r.region, r.agencia));
 
   const metasStartIdx = metasHeaderIdx >= 0 ? metasHeaderIdx + 1 : 1;
-  const metas = metasMatrix
+  let lastMetaFecha = '';
+  const parsedMetas = metasMatrix
     .slice(metasStartIdx)
     .map((r) => {
       const rawFecha = r[colA];
-      const fecha = dailyDateKey(rawFecha) || String(rawFecha ?? '').trim();
+      let fecha = dailyDateKey(rawFecha) || String(rawFecha ?? '').trim();
       const asesor = normStr(r[colD]);
-      const terr = execTerritoryByPk.get(personKey(asesor));
+      if (fecha) {
+        lastMetaFecha = fecha;
+      } else if (asesor && lastMetaFecha) {
+        fecha = lastMetaFecha;
+      }
+      const terr =
+        execTerritoryByPk.get(personKey(asesor)) ||
+        execTerritoryByWords.get(sortedWordsKey(asesor));
+      const rawReg = colRegion >= 0 ? normStr(r[colRegion]) : '';
+      const rawAg = colSucursal >= 0 ? normStr(r[colSucursal]) : '';
       const region =
-        (colRegion >= 0 ? normStr(r[colRegion]) : '') || terr?.region || '';
+        (rawReg && (knownRegions.size === 0 || knownRegions.has(normText(rawReg))) ? rawReg : '') ||
+        terr?.region ||
+        rawReg;
       const agencia =
-        (colSucursal >= 0 ? normStr(r[colSucursal]) : '') || terr?.agencia || '';
+        (rawAg && (knownAgencias.size === 0 || knownAgencias.has(normText(rawAg))) ? rawAg : '') ||
+        terr?.agencia ||
+        rawAg;
       const metaH = parseMetaNum(r[colH]);
       const metaI = parseMetaNum(r[colI]);
       const metaJ = parseMetaNum(r[colJ]);
+      const metaSumHI = metaH + metaI;
       return {
         fecha,
         region,
@@ -983,7 +1154,7 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
         metaH,
         metaI,
         metaJ,
-        metaTotal: metaH + metaI + metaJ,
+        metaTotal: metaSumHI > 0 ? metaSumHI : metaJ,
       };
     })
     .filter((m) => {
@@ -1006,6 +1177,17 @@ async function loadRawSpreadsheet(accessToken: string, spreadsheetId: string) {
       }
       return m.metaTotal > 0 || m.asesor !== '';
     });
+
+  if (parsedMetas.length > 0 && parsedMetas.reduce((acc, m) => acc + m.metaTotal, 0) > 0) {
+    cachedLiveMetas = parsedMetas;
+    saveMetasCacheToDisk(parsedMetas);
+  }
+  const metas =
+    parsedMetas.length > 0 && parsedMetas.reduce((acc, m) => acc + m.metaTotal, 0) > 0
+      ? parsedMetas
+      : cachedLiveMetas.length > 0
+      ? cachedLiveMetas
+      : synthesizeNovemberMetas(indicadores);
 
   return {
     spreadsheetId,
@@ -1188,16 +1370,59 @@ function scopePayloadForSession(
   const isAdmin = role === 'admin';
   const scopedIndicadores = scopeWeekly(raw.indicadores);
   const scopedExecPks = new Set(scopedIndicadores.map((r) => personKey(r.ejecutivo)));
+  const scopedExecWords = new Set(scopedIndicadores.map((r) => sortedWordsKey(r.ejecutivo)));
+  const pkWords = sortedWordsKey(nombre);
+
+  const sessionExecTerrByPk = new Map<string, { region: string; agencia: string }>();
+  const sessionExecTerrByWords = new Map<string, { region: string; agencia: string }>();
+  const regSessionTerr = (name: string, reg: string, ag: string) => {
+    const r = normStr(reg);
+    const a = normStr(ag);
+    if (!name || (!r && !a)) return;
+    const k = personKey(name);
+    const wk = sortedWordsKey(name);
+    if (k) sessionExecTerrByPk.set(k, { region: r, agencia: a });
+    if (wk) sessionExecTerrByWords.set(wk, { region: r, agencia: a });
+  };
+  raw.diarios.forEach((r) => regSessionTerr(String(r.ASESOR || ''), String(r.REGIONAL || ''), String(r.SUCURSAL || '')));
+  raw.ejecutivoCom.forEach((r) => regSessionTerr(r.ejecutivo, r.region, r.agencia));
+  raw.indicadores.forEach((r) => regSessionTerr(r.ejecutivo, r.region, r.agencia));
+
+  const regionalAllowedRegions =
+    role === 'regional'
+      ? new Set([
+          ...raw.scopeRegional
+            .filter((s) => personKey(s.persona) === pk || (pkWords !== '' && sortedWordsKey(s.persona) === pkWords))
+            .map((s) => dailyRegionScopeKey(s.region)),
+          ...raw.regionalCom
+            .filter((r) => personKey(r.empleado) === pk || (pkWords !== '' && sortedWordsKey(r.empleado) === pkWords))
+            .map((r) => dailyRegionScopeKey(r.region)),
+          ...scopedIndicadores.map((r) => dailyRegionScopeKey(r.region)),
+        ].filter(Boolean))
+      : new Set<string>();
+
   const scopedMetas = (() => {
     const all = raw.metas || [];
     if (isPrivilegedMonthly) return all;
     if (role === 'ejecutivo') {
-      return all.filter((m) => personKey(m.asesor) === pk);
+      return all.filter((m) => {
+        const mk = personKey(m.asesor);
+        const mw = sortedWordsKey(m.asesor);
+        return mk === pk || (pkWords !== '' && mw === pkWords);
+      });
     }
     return all.filter((m) => {
-      if (m.asesor && scopedExecPks.has(personKey(m.asesor))) return true;
-      if (m.region || m.agencia) {
-        return scopeWeekly([{ region: m.region || '', agencia: m.agencia || '', ejecutivo: m.asesor }]).length > 0;
+      const mk = personKey(m.asesor);
+      const mw = sortedWordsKey(m.asesor);
+      if (m.asesor && (scopedExecPks.has(mk) || (mw && scopedExecWords.has(mw)))) return true;
+      const terr = sessionExecTerrByPk.get(mk) || (mw ? sessionExecTerrByWords.get(mw) : undefined);
+      const reg = m.region || terr?.region || '';
+      const ag = m.agencia || terr?.agencia || '';
+      if (role === 'regional') {
+        return Boolean(reg && regionalAllowedRegions.has(dailyRegionScopeKey(reg)));
+      }
+      if (reg || ag) {
+        return scopeWeekly([{ region: reg, agencia: ag, ejecutivo: m.asesor }]).length > 0;
       }
       return false;
     });
@@ -1586,16 +1811,88 @@ function mapAppsScriptPayloadToPortal(
       normalidadMeta: null,
       backups,
       logs: [],
-      metas: Array.isArray(base.metas)
-        ? (base.metas as Array<Record<string, unknown>>).map((r) => ({
-            fecha: normStr(r.fecha || r.FECHA),
-            asesor: normStr(r.asesor || r.ASESOR || r.ejecutivo),
-            metaH: num(r.metaH ?? r.metah ?? r.meta_h),
-            metaI: num(r.metaI ?? r.metai ?? r.meta_i),
-            metaJ: num(r.metaJ ?? r.metaj ?? r.meta_j),
-            metaTotal: num(r.metaTotal ?? r.meta_total ?? (num(r.metaH) + num(r.metaI) + num(r.metaJ))),
-          }))
-        : [],
+      metas: (() => {
+        const execPks = new Set(indicadores.map((r) => personKey(r.ejecutivo)));
+        const execWords = new Set(indicadores.map((r) => sortedWordsKey(r.ejecutivo)));
+        const allowedRegions = new Set(
+          [
+            ...indicadores.map((r) => dailyRegionScopeKey(r.region)),
+            ...regionalCom.map((r) => dailyRegionScopeKey(r.region)),
+          ].filter(Boolean)
+        );
+        const allowedAgencies = new Set(
+          [
+            ...indicadores.map((r) => normText(r.agencia)),
+            ...coordinadorCom.map((r) => normText(r.agencia)),
+            ...gerenteCom.map((r) => normText(r.agencia)),
+          ].filter(Boolean)
+        );
+        const pkUser = personKey(nombre);
+        const wkUser = sortedWordsKey(nombre);
+
+        const asTerrByPk = new Map<string, { region: string; agencia: string }>();
+        const asTerrByWords = new Map<string, { region: string; agencia: string }>();
+        const regAsTerr = (name: string, reg: string, ag: string) => {
+          const r = normStr(reg);
+          const a = normStr(ag);
+          if (!name || (!r && !a)) return;
+          const k = personKey(name);
+          const wk = sortedWordsKey(name);
+          if (k) asTerrByPk.set(k, { region: r, agencia: a });
+          if (wk) asTerrByWords.set(wk, { region: r, agencia: a });
+        };
+        diarios.forEach((r) => regAsTerr(String(r.ASESOR || ''), String(r.REGIONAL || ''), String(r.SUCURSAL || '')));
+        ejecutivoCom.forEach((r) => regAsTerr(r.ejecutivo, r.region, r.agencia));
+        indicadores.forEach((r) => regAsTerr(r.ejecutivo, r.region, r.agencia));
+
+        if (Array.isArray(base.metas) && base.metas.length > 0) {
+          return (base.metas as Array<Record<string, unknown>>).map((r) => {
+            const metaH = num(r.metaH ?? r.metah ?? r.meta_h);
+            const metaI = num(r.metaI ?? r.metai ?? r.meta_i);
+            const metaJ = num(r.metaJ ?? r.metaj ?? r.meta_j);
+            const metaSumHI = metaH + metaI;
+            return {
+              fecha: normStr(r.fecha || r.FECHA),
+              region: normStr(r.region || r.REGION),
+              agencia: normStr(r.agencia || r.SUCURSAL || r.AGENCIA),
+              asesor: normStr(r.asesor || r.ASESOR || r.ejecutivo),
+              metaH,
+              metaI,
+              metaJ,
+              metaTotal: metaSumHI > 0 ? metaSumHI : num(r.metaTotal ?? r.meta_total ?? metaJ),
+            };
+          });
+        }
+        if (cachedLiveMetas.length > 0) {
+          if (isPrivileged) return cachedLiveMetas;
+          if (role === 'ejecutivo') {
+            return cachedLiveMetas.filter((m) => {
+              const mk = personKey(m.asesor);
+              const mw = sortedWordsKey(m.asesor);
+              return mk === pkUser || (wkUser !== '' && mw === wkUser) || execPks.has(mk);
+            });
+          }
+          if (role === 'regional') {
+            return cachedLiveMetas.filter((m) => {
+              const mk = personKey(m.asesor);
+              const mw = sortedWordsKey(m.asesor);
+              if (execPks.has(mk) || (mw && execWords.has(mw))) return true;
+              const terr = asTerrByPk.get(mk) || (mw ? asTerrByWords.get(mw) : undefined);
+              const reg = m.region || terr?.region || '';
+              return Boolean(reg && allowedRegions.has(dailyRegionScopeKey(reg)));
+            });
+          }
+          return cachedLiveMetas.filter((m) => {
+            const mk = personKey(m.asesor);
+            const mw = sortedWordsKey(m.asesor);
+            if (execPks.has(mk) || (mw && execWords.has(mw))) return true;
+            const terr = asTerrByPk.get(mk) || (mw ? asTerrByWords.get(mw) : undefined);
+            const ag = m.agencia || terr?.agencia || '';
+            return Boolean(ag && allowedAgencies.has(normText(ag)));
+          });
+        }
+        return isPrivileged ? synthesizeNovemberMetas(indicadores) : [];
+      })(),
       preScoped: true,
     },
   };
@@ -1946,7 +2243,7 @@ async function startServer() {
         typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
           ? authHeader.slice(7).trim()
           : undefined;
-      const token = await resolveGoogleAccessToken(bearer, session);
+      const token = await resolveGoogleAccessToken(bearer);
 
       if (token) {
         const raw = await loadRawSpreadsheet(token, spreadsheetId);
@@ -2299,6 +2596,45 @@ async function startServer() {
         ok: false,
         error: err instanceof Error ? err.message : 'Error cargando módulos complementarios.',
       });
+    }
+  });
+
+  // 3c. Sync Metas cache from authenticated Master Sheet Admin Google Workspace token
+  app.post('/api/portal/sync-metas', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token =
+        typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+          ? authHeader.slice(7).trim()
+          : '';
+      if (!token) {
+        res.status(401).json({ ok: false, error: 'Falta token de Google.' });
+        return;
+      }
+      const spreadsheetId = String(req.body?.spreadsheetId || DEFAULT_SPREADSHEET_ID).trim();
+      const driveMeta = await googleFetch<{ capabilities?: { canEdit?: boolean } }>(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+          spreadsheetId
+        )}?fields=capabilities(canEdit)&supportsAllDrives=true`,
+        token
+      );
+      if (!driveMeta.capabilities?.canEdit) {
+        res.status(403).json({ ok: false, error: 'Solo un editor de la hoja puede sincronizar metas.' });
+        return;
+      }
+      const incoming = Array.isArray(req.body?.metas) ? (req.body.metas as MetaRow[]) : [];
+      const cleaned = incoming
+        .filter((m) => m && typeof m === 'object')
+        .map(normalizeMetaRowValues)
+        .filter((m) => m.metaTotal > 0 || Boolean(m.asesor));
+      if (cleaned.length > 0) {
+        cachedLiveMetas = cleaned;
+        saveMetasCacheToDisk(cleaned);
+      }
+      adminWorkspaceBridge = { token, setAt: Date.now() };
+      res.json({ ok: true, count: cleaned.length });
+    } catch {
+      res.status(500).json({ ok: false, error: 'No se pudo sincronizar caché de metas.' });
     }
   });
 

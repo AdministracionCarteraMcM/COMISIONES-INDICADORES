@@ -28,6 +28,12 @@ export const MIN_PAGOS_RANK = 5;
 
 export const TERRITORIOS: Record<string, number> = {
   'EDO. MEXICO': 1,
+  'EDO.MEXICO': 1,
+  EDOMEXICO: 1,
+  EDOMEX: 1,
+  ESTADODEMEXICO: 1,
+  'EDO. MEXICO 2': 1,
+  'EDOMEXICO 2': 1,
   NEVADO: 1,
   VOLCANES: 1,
   METROPOLITANO: 1,
@@ -51,11 +57,22 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 export const REGION_DISPLAY_NAMES: Record<string, string> = {
-  'EDO. MEXICO 2': 'EDOMEXICO',
+  'EDOMEXICO': 'EDO.MEXICO',
+  'EDOMEX': 'EDO.MEXICO',
+  'ESTADODEMEXICO': 'EDO.MEXICO',
+  'EDO. MEXICO': 'EDO.MEXICO',
+  'EDO.MEXICO': 'EDO.MEXICO',
+  'EDO. MEXICO 2': 'EDO.MEXICO',
+  'EDOMEXICO 2': 'EDO.MEXICO',
 };
 
 export function regionDisplayName(region: string): string {
-  return REGION_DISPLAY_NAMES[region] || region;
+  const clean = normText(region);
+  if (!clean) return region;
+  if (REGION_DISPLAY_NAMES[clean]) return REGION_DISPLAY_NAMES[clean];
+  if (REGION_DISPLAY_NAMES[region]) return REGION_DISPLAY_NAMES[region];
+  if (dailyRegionScopeKey(region) === 'EDO.MEXICO') return 'EDO.MEXICO';
+  return region;
 }
 
 export function normText(v: unknown): string {
@@ -78,13 +95,17 @@ export function personKey(v: unknown): string {
 export function dailyRegionScopeKey(value: unknown): string {
   const region = personKey(value);
   if (region === 'VOLCANESORIENTE') return 'VOLCANES';
-  if (region === 'EDOMEX' || region === 'ESTADODEMEXICO') return 'EDOMEXICO';
+  if (region === 'EDOMEXICO' || region === 'EDOMEX' || region === 'ESTADODEMEXICO' || region === 'EDOMEXICO2') return 'EDO.MEXICO';
   return region;
 }
 
 export function terrOf(regionName: string): number {
-  const t = TERRITORIOS[normText(regionName)];
-  return t == null ? 0 : t;
+  const direct = TERRITORIOS[normText(regionName)];
+  if (direct != null) return direct;
+  const disp = TERRITORIOS[normText(regionDisplayName(regionName))];
+  if (disp != null) return disp;
+  const scope = TERRITORIOS[dailyRegionScopeKey(regionName)];
+  return scope == null ? 0 : scope;
 }
 
 export function num(v: unknown): number {
@@ -554,14 +575,15 @@ export function buildTerritoryTree(rows: IndicadorRow[]) {
   const emap = new Map<string, TreeNode>();
 
   for (const r of rows) {
-    const reg = r.region || 'Sin región';
+    const reg = regionDisplayName(r.region || 'Sin región');
+    const regKey = dailyRegionScopeKey(reg) || reg;
     const ag = r.agencia || 'Sin agencia';
     const ej = r.ejecutivo || 'Sin nombre';
-    const t = terrOf(regionDisplayName(reg));
+    const t = terrOf(reg);
     const tk = `t:${t}`;
-    const rk = `r:${reg}`;
-    const ak = `a:${reg}|${ag}`;
-    const ek = `e:${reg}|${ag}|${ej}`;
+    const rk = `r:${regKey}`;
+    const ak = `a:${regKey}|${ag}`;
+    const ek = `e:${regKey}|${ag}|${ej}`;
 
     if (!tmap.has(tk)) {
       const tn: TreeNode = {
@@ -579,7 +601,7 @@ export function buildTerritoryTree(rows: IndicadorRow[]) {
       const rn: TreeNode = {
         id: rk,
         lvl: 2,
-        label: `Región ${regionDisplayName(reg)}`,
+        label: `Región ${reg}`,
         m: blank(),
         kids: [],
       };

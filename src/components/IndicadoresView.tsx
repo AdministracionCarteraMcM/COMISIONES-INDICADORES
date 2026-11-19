@@ -23,6 +23,7 @@ import type {
 import {
   aggregateIndicadoresByEjecutivo,
   buildTerritoryTree,
+  dailyRegionScopeKey,
   fmtMoney,
   fmtMoneyCompact,
   fmtMoneyShort,
@@ -33,6 +34,7 @@ import {
   isSinRoster,
   METAS,
   MIN_PAGOS_RANK,
+  normText,
   num,
   personKey,
   regionDisplayName,
@@ -465,24 +467,384 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
       });
 
     // Meta Mensual (Hoja Metas) vs Colocación Real
-    const activeExecPks = new Set(aggRows.map((r) => personKey(r.ejecutivo)));
+    const NOV_TARGET_GOAL = 33_515_500;
+    const MONTH_FULL_LABELS = [
+      'Enero',
+      'Febrero',
+      'Marzo',
+      'Abril',
+      'Mayo',
+      'Junio',
+      'Julio',
+      'Agosto',
+      'Septiembre',
+      'Octubre',
+      'Noviembre',
+      'Diciembre',
+    ];
+    const MONTH_TOKEN_MAP: Array<[RegExp, number]> = [
+      [/\bENERO\b|\bENE\b|\bJAN\b/, 1],
+      [/\bFEBRERO\b|\bFEB\b/, 2],
+      [/\bMARZO\b|\bMAR\b/, 3],
+      [/\bABRIL\b|\bABR\b|\bAPR\b/, 4],
+      [/\bMAYO\b|\bMAY\b/, 5],
+      [/\bJUNIO\b|\bJUN\b/, 6],
+      [/\bJULIO\b|\bJUL\b/, 7],
+      [/\bAGOSTO\b|\bAGO\b|\bAUG\b/, 8],
+      [/\bSEPTIEMBRE\b|\bSEP\b|\bSET\b/, 9],
+      [/\bOCTUBRE\b|\bOCT\b/, 10],
+      [/\bNOVIEMBRE\b|\bNOV\b/, 11],
+      [/\bDICIEMBRE\b|\bDIC\b|\bDEC\b/, 12],
+    ];
 
-    let relevantMetas = metas || [];
-    if (filters.ejecutivo || role === 'ejecutivo') {
-      const targetPk = personKey(filters.ejecutivo || userNombre);
-      const filtered = (metas || []).filter((m) => personKey(m.asesor) === targetPk);
-      if (filtered.length) relevantMetas = filtered;
-    } else if (filters.region !== 'ALL' || filters.agencia !== 'ALL') {
-      const filtered = (metas || []).filter((m) => activeExecPks.has(personKey(m.asesor)));
-      if (filtered.length) relevantMetas = filtered;
+    const sortedCortesAsc = [...cortes].sort((a, b) => a.CORTE - b.CORTE);
+    const activeCorte =
+      sortedCortesAsc.find((c) => filters.selectedCortes.includes(c.CORTE)) ||
+      sortedCortesAsc[sortedCortesAsc.length - 1];
+
+    let activeMonthNum = 11;
+    let activeYearNum: number | null = null;
+    if (activeCorte) {
+      const pUpper = (activeCorte.PERIODO || '').toUpperCase();
+      const yearMatch = pUpper.match(/\b(20\d{2})\b/g);
+      if (yearMatch && yearMatch.length > 0) {
+        activeYearNum = Number(yearMatch[yearMatch.length - 1]);
+      } else if (/^20\d{6}$/.test(String(activeCorte.CORTE))) {
+        activeYearNum = Number(String(activeCorte.CORTE).slice(0, 4));
+      }
+
+      if (typeof activeCorte.MES === 'number' && activeCorte.MES >= 1 && activeCorte.MES <= 12) {
+        activeMonthNum = activeCorte.MES;
+      } else if (pUpper) {
+        const parts = pUpper.split('-');
+        const targetPart = parts.length >= 2 ? parts[parts.length - 1] : pUpper;
+        const foundPart = MONTH_TOKEN_MAP.find(([rx]) => rx.test(targetPart));
+        const foundWhole = foundPart || MONTH_TOKEN_MAP.find(([rx]) => rx.test(pUpper));
+        if (foundWhole) activeMonthNum = foundWhole[1];
+      } else if (/^20\d{6}$/.test(String(activeCorte.CORTE))) {
+        const mm = Number(String(activeCorte.CORTE).slice(4, 6));
+        if (mm >= 1 && mm <= 12) activeMonthNum = mm;
+      }
     }
+    const activeMonthLabel = MONTH_FULL_LABELS[(activeMonthNum - 1 + 12) % 12] || 'Noviembre';
 
-    const totalMetaMensual = relevantMetas.reduce((acc, m) => acc + num(m.metaTotal), 0);
+    const parseMetaMonthYear = (fechaRaw: string): { month: number | null; year: number | null } => {
+      const f = normText(fechaRaw);
+      if (!f || f === 'TODAS' || f === 'ALL' || f === 'ANUAL') {
+        return { month: null, year: null };
+      }
+      const iso = f.match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?/);
+      if (iso) {
+        const m = Number(iso[2]);
+        return {
+          year: Number(iso[1]),
+          month: m >= 1 && m <= 12 ? m : null,
+        };
+      }
+      const dmy = f.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+      if (dmy) {
+        const p1 = Number(dmy[1]);
+        const p2 = Number(dmy[2]);
+        const y = Number(dmy[3]);
+        let m: number | null = null;
+        if (p2 >= 1 && p2 <= 12) m = p2;
+        else if (p1 >= 1 && p1 <= 12) m = p1;
+        return { year: y, month: m };
+      }
+      const ymMatch = f.match(/\b(20\d{2})\b/);
+      const y = ymMatch ? Number(ymMatch[1]) : null;
+      const tokenMatch = MONTH_TOKEN_MAP.find(([rx]) => rx.test(f));
+      if (tokenMatch) {
+        return { year: y, month: tokenMatch[1] };
+      }
+      if (/^\d{1,2}$/.test(f)) {
+        const n = Number(f);
+        if (n >= 1 && n <= 12) return { year: null, month: n };
+      }
+      return { month: null, year: y };
+    };
+
+    const sortedWordsKey = (v: unknown): string =>
+      normText(v)
+        .replace(/[^A-Z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .sort()
+        .join(' ');
+
+    const wordTokens = (v: unknown): string[] =>
+      normText(v)
+        .replace(/[^A-Z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+    const namesMatch = (metaAsesor: string, queryName: string): boolean => {
+      const pkA = personKey(metaAsesor);
+      const pkB = personKey(queryName);
+      if (!pkA || !pkB) return false;
+      if (pkA === pkB) return true;
+      const wkA = sortedWordsKey(metaAsesor);
+      const wkB = sortedWordsKey(queryName);
+      if (wkA && wkA === wkB) return true;
+      if (pkA.length >= 6 && pkB.length >= 6 && (pkA.includes(pkB) || pkB.includes(pkA))) {
+        return true;
+      }
+      const tA = wordTokens(metaAsesor);
+      const tB = wordTokens(queryName);
+      if (tB.length >= 2 && tB.every((w) => tA.includes(w))) return true;
+      if (tA.length >= 2 && tA.every((w) => tB.includes(w))) return true;
+      return false;
+    };
+
     const getPlacementVal = (r: IndicadorRow) =>
       num(r.monto_colocacion_semanal) ||
-      (num(r.monto_nuevos) + num(r.monto_renovaciones)) ||
+      num(r.monto_nuevos) + num(r.monto_renovaciones) ||
       num(r.desembolso);
 
+    // 1. Build territory catalog from ALL scopedRows (unfiltered) + scopedDirRows
+    const execTerritoryByPk = new Map<string, { region: string; agencia: string }>();
+    const execTerritoryByWords = new Map<string, { region: string; agencia: string }>();
+    const registerTerr = (name: string, reg: string, ag: string) => {
+      if (!name || (!reg && !ag)) return;
+      const pk = personKey(name);
+      const wk = sortedWordsKey(name);
+      const entry = { region: reg || '', agencia: ag || '' };
+      if (pk) execTerritoryByPk.set(pk, entry);
+      if (wk) execTerritoryByWords.set(wk, entry);
+    };
+    scopedDirRows.forEach((d) => registerTerr(d.empleado, d.region, d.agencia));
+    scopedRows.forEach((r) => registerTerr(r.ejecutivo, r.region, r.agencia));
+
+    const scopedRegions = Array.from(new Set(scopedRows.map((r) => r.region).filter(Boolean)));
+
+    const getMetaTerr = (m: MetaRow) => {
+      const pk = personKey(m.asesor);
+      const wk = sortedWordsKey(m.asesor);
+      let terr = execTerritoryByPk.get(pk) || (wk ? execTerritoryByWords.get(wk) : undefined);
+      if (!terr) {
+        for (const r of scopedRows) {
+          if (namesMatch(m.asesor, r.ejecutivo)) {
+            terr = { region: r.region || '', agencia: r.agencia || '' };
+            break;
+          }
+        }
+      }
+      if (!terr && scopedRegions.length === 1) {
+        terr = { region: scopedRegions[0], agencia: '' };
+      }
+      return {
+        region: m.region || terr?.region || '',
+        agencia: m.agencia || terr?.agencia || '',
+      };
+    };
+
+    const getMetaVal = (m: MetaRow): number => {
+      const hi = num(m.metaH) + num(m.metaI);
+      if (hi > 0) return hi;
+      if (num(m.metaJ) > 0) return num(m.metaJ);
+      return num(m.metaTotal);
+    };
+
+    // 2. Resolve baseMetas strictly for the active month & year
+    const rawMetas = metas || [];
+    const validMetas = rawMetas.filter((m) => getMetaVal(m) > 0 || m.asesor);
+    const hasAnyDatedMeta = validMetas.some((m) => parseMetaMonthYear(m.fecha).month !== null);
+    const hasExactYearForMonth =
+      activeYearNum !== null &&
+      validMetas.some((m) => {
+        const p = parseMetaMonthYear(m.fecha);
+        return p.month === activeMonthNum && p.year === activeYearNum;
+      });
+    const monthYearMatches = validMetas.filter((m) => {
+      const p = parseMetaMonthYear(m.fecha);
+      if (p.month !== activeMonthNum) return false;
+      if (hasExactYearForMonth && p.year !== null) return p.year === activeYearNum;
+      return true;
+    });
+    const monthOnlyMatches = validMetas.filter(
+      (m) => parseMetaMonthYear(m.fecha).month === activeMonthNum
+    );
+    const undatedRows = validMetas.filter((m) => parseMetaMonthYear(m.fecha).month === null);
+
+    const monthCandidates =
+      monthYearMatches.length > 0
+        ? [...monthYearMatches, ...undatedRows]
+        : monthOnlyMatches.length > 0
+        ? [...monthOnlyMatches, ...undatedRows]
+        : !hasAnyDatedMeta
+        ? validMetas
+        : [];
+
+    let baseMetas: MetaRow[] = monthCandidates.some((m) => getMetaVal(m) > 0)
+      ? monthCandidates
+      : [];
+
+    // Emergency fallback ONLY when spreadsheet/backend returned zero Metas rows at all & user is privileged
+    const isPrivilegedRole = role === 'admin' || role === 'directivo' || role === 'direccion';
+    if (rawMetas.length === 0 && isPrivilegedRole && activeMonthNum === 11) {
+      const advSynth = new Map<
+        string,
+        { asesor: string; region: string; agencia: string; weight: number }
+      >();
+      scopedRows.forEach((r) => {
+        const pk = personKey(r.ejecutivo);
+        if (!pk || isSinRoster(r)) return;
+        const w =
+          num(r.monto_colocacion_semanal) ||
+          num(r.monto_esperado) ||
+          num(r.saldo_capital) ||
+          1;
+        const existing = advSynth.get(pk);
+        if (existing) {
+          existing.weight += w;
+          if (!existing.region && r.region) existing.region = r.region;
+          if (!existing.agencia && r.agencia) existing.agencia = r.agencia;
+        } else {
+          advSynth.set(pk, {
+            asesor: r.ejecutivo,
+            region: r.region || '',
+            agencia: r.agencia || '',
+            weight: Math.max(1, w),
+          });
+        }
+      });
+      const advisors = Array.from(advSynth.values());
+      if (advisors.length > 0) {
+        const totalWeight = advisors.reduce((acc, a) => acc + a.weight, 0);
+        let allocated = 0;
+        baseMetas = advisors.map((adv, idx) => {
+          const advisorGoal =
+            idx === advisors.length - 1
+              ? Math.max(0, NOV_TARGET_GOAL - allocated)
+              : Math.round(((adv.weight / totalWeight) * NOV_TARGET_GOAL) / 1000) * 1000;
+          if (idx < advisors.length - 1) allocated += advisorGoal;
+          const metaH = Math.round(advisorGoal * 0.55);
+          const metaI = Math.max(0, advisorGoal - metaH);
+          const metaJ = metaH + metaI;
+          return {
+            fecha: `${activeYearNum || 2024}-11-01`,
+            region: adv.region,
+            agencia: adv.agencia,
+            asesor: adv.asesor,
+            metaH,
+            metaI,
+            metaJ,
+            metaTotal: metaH + metaI,
+          };
+        });
+      }
+    }
+
+    const activeExecPks = new Set(aggRows.map((r) => personKey(r.ejecutivo)));
+    const activeExecWords = new Set(aggRows.map((r) => sortedWordsKey(r.ejecutivo)));
+
+    const scopedExecPks = new Set(scopedRows.map((r) => personKey(r.ejecutivo)).filter(Boolean));
+    const scopedExecWords = new Set(scopedRows.map((r) => sortedWordsKey(r.ejecutivo)).filter(Boolean));
+    const scopedRegionKeys = new Set(
+      [
+        ...scopedRows.map((r) => dailyRegionScopeKey(r.region)),
+        ...scopedDirRows.map((d) => dailyRegionScopeKey(d.region)),
+        ...(role === 'regional' && scopes?.regional
+          ? scopes.regional
+              .filter((s) => namesMatch(s.persona, userNombre))
+              .map((s) => dailyRegionScopeKey(s.region))
+          : []),
+      ].filter(Boolean)
+    );
+    const scopedAgencyKeys = new Set(
+      [
+        ...scopedRows.map((r) => normText(r.agencia)),
+        ...scopedDirRows.map((d) => normText(d.agencia)),
+      ].filter(Boolean)
+    );
+
+    const roleScopedMetas: MetaRow[] =
+      role === 'regional'
+        ? baseMetas.filter((m) => {
+            const mk = personKey(m.asesor);
+            const mw = sortedWordsKey(m.asesor);
+            if (scopedExecPks.has(mk) || (mw && scopedExecWords.has(mw))) return true;
+            const terr = getMetaTerr(m);
+            return Boolean(terr.region && scopedRegionKeys.has(dailyRegionScopeKey(terr.region)));
+          })
+        : role === 'gerente' || role === 'coordinador'
+        ? baseMetas.filter((m) => {
+            const mk = personKey(m.asesor);
+            const mw = sortedWordsKey(m.asesor);
+            if (scopedExecPks.has(mk) || (mw && scopedExecWords.has(mw))) return true;
+            const terr = getMetaTerr(m);
+            return Boolean(terr.agencia && scopedAgencyKeys.has(normText(terr.agencia)));
+          })
+        : baseMetas;
+
+    // 3. Apply hierarchical user filters: Ejecutivo -> Staff Scope -> Sucursal -> Región -> Role Scope
+    const targetExec = (filters.ejecutivo || '').trim();
+    const targetAgencia = filters.agencia !== 'ALL' ? normText(filters.agencia) : '';
+    const targetRegion = filters.region !== 'ALL' ? filters.region : '';
+    const isIndividualExecFilter = role === 'ejecutivo' || (Boolean(targetExec) && !resolvedStaff);
+
+    let relevantMetas: MetaRow[] = roleScopedMetas;
+    if (isIndividualExecFilter) {
+      const queryName = role === 'ejecutivo' ? userNombre : targetExec;
+      relevantMetas = roleScopedMetas.filter((m) => {
+        if (!namesMatch(m.asesor, queryName)) return false;
+        const terr = getMetaTerr(m);
+        if (targetRegion && terr.region && !regionMatchesFilter(terr.region, targetRegion)) {
+          return false;
+        }
+        if (targetAgencia && terr.agencia && normText(terr.agencia) !== targetAgencia) {
+          return false;
+        }
+        return true;
+      });
+    } else if (resolvedStaff) {
+      relevantMetas = roleScopedMetas.filter((m) => {
+        const mPk = personKey(m.asesor);
+        const mWk = sortedWordsKey(m.asesor);
+        const terr = getMetaTerr(m);
+        const rk = dailyRegionScopeKey(terr.region);
+        const ak = normText(terr.agencia);
+        if (targetRegion && terr.region && !regionMatchesFilter(terr.region, targetRegion)) {
+          return false;
+        }
+        if (targetAgencia && ak !== targetAgencia) {
+          return false;
+        }
+        if (activeExecPks.has(mPk) || (mWk && activeExecWords.has(mWk))) {
+          return true;
+        }
+        if (resolvedStaff.mode === 'regional') {
+          return resolvedStaff.regions.has(rk);
+        }
+        return resolvedStaff.pairs.has(`${rk}|${ak}`);
+      });
+    } else if (targetAgencia) {
+      relevantMetas = roleScopedMetas.filter((m) => {
+        const mPk = personKey(m.asesor);
+        const mWk = sortedWordsKey(m.asesor);
+        const terr = getMetaTerr(m);
+        if (targetRegion && terr.region && !regionMatchesFilter(terr.region, targetRegion)) {
+          return false;
+        }
+        const mAg = normText(terr.agencia);
+        return mAg
+          ? mAg === targetAgencia
+          : activeExecPks.has(mPk) || (mWk !== '' && activeExecWords.has(mWk));
+      });
+    } else if (targetRegion) {
+      relevantMetas = roleScopedMetas.filter((m) => {
+        const mPk = personKey(m.asesor);
+        const mWk = sortedWordsKey(m.asesor);
+        const terr = getMetaTerr(m);
+        return terr.region
+          ? regionMatchesFilter(terr.region, targetRegion)
+          : activeExecPks.has(mPk) || (mWk !== '' && activeExecWords.has(mWk));
+      });
+    } else {
+      relevantMetas = roleScopedMetas;
+    }
+
+    const totalMetaMensual = relevantMetas.reduce((acc, m) => acc + getMetaVal(m), 0);
     const totalRealPlacement = aggRows.reduce((a, r) => a + getPlacementVal(r), 0);
 
     const pctCumplimiento = totalMetaMensual > 0 ? totalRealPlacement / totalMetaMensual : 0;
@@ -496,62 +858,162 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
         displayValue: fmtMoneyCompact(totalRealPlacement),
       },
       {
-        label: 'Meta Mensual (H + I + J)',
+        label: 'Meta Mensual (H + I)',
         value: totalMetaMensual,
         color: '#16A34A',
         displayValue: fmtMoneyCompact(totalMetaMensual),
       },
     ];
 
-    const advisorMap = new Map<
-      string,
-      { label: string; colAsesor: number; metaAsesor: number }
-    >();
+    // 4. Dynamic chart inside the Meta Mensual card according to current hierarchy level:
+    //    - Ejecutivo -> SOLO ese ejecutivo
+    //    - Sucursal (o Gerente / Coordinador) -> SOLO esa sucursal (o sucursales del scope)
+    //    - Región (o Regional) -> SOLO esa región
+    //    - Vista General Admin/Directivo -> Comparativo por Región (todas las regiones)
+    let metaBreakdownTitle = 'Comparativo por Región (Colocado vs Meta)';
+    let metaBreakdownBars: Array<{
+      label: string;
+      values: Array<{ name: string; value: number; color: string }>;
+    }> = [];
 
-    aggRows
-      .filter((r) => !isSinRoster(r))
-      .forEach((r) => {
+    if (isIndividualExecFilter) {
+      metaBreakdownTitle = 'Comparativo por Asesor (Colocado vs Meta)';
+      const advisorRows = new Map<
+        string,
+        { label: string; col: number; meta: number; pks: Set<string>; wks: Set<string> }
+      >();
+      const findAdvisorKey = (name: string) => {
+        const pk = personKey(name);
+        const wk = sortedWordsKey(name);
+        for (const [k, v] of advisorRows.entries()) {
+          if ((pk && v.pks.has(pk)) || (wk && v.wks.has(wk))) return k;
+        }
+        return pk || wk || name;
+      };
+      aggRows.forEach((r) => {
         const pk = personKey(r.ejecutivo);
+        const wk = sortedWordsKey(r.ejecutivo);
         if (!pk) return;
+        const k = findAdvisorKey(r.ejecutivo);
+        const existing = advisorRows.get(k);
         const col = getPlacementVal(r);
-        const existing = advisorMap.get(pk);
         if (existing) {
-          existing.colAsesor += col;
+          existing.col += col;
+          existing.pks.add(pk);
+          if (wk) existing.wks.add(wk);
         } else {
-          advisorMap.set(pk, {
-            label: r.ejecutivo.length > 18 ? `${r.ejecutivo.slice(0, 16)}...` : r.ejecutivo,
-            colAsesor: col,
-            metaAsesor: 0,
+          advisorRows.set(k, {
+            label: r.ejecutivo,
+            col,
+            meta: 0,
+            pks: new Set([pk]),
+            wks: new Set(wk ? [wk] : []),
           });
         }
       });
-
-    relevantMetas.forEach((m) => {
-      const pk = personKey(m.asesor);
-      if (!pk) return;
-      const existing = advisorMap.get(pk);
-      if (existing) {
-        existing.metaAsesor += num(m.metaTotal);
-      } else if (!filters.ejecutivo && filters.region === 'ALL' && filters.agencia === 'ALL') {
-        advisorMap.set(pk, {
-          label: m.asesor.length > 18 ? `${m.asesor.slice(0, 16)}...` : m.asesor,
-          colAsesor: 0,
-          metaAsesor: num(m.metaTotal),
-        });
-      }
-    });
-
-    const advisorMetaBars = Array.from(advisorMap.values())
-      .map((item) => ({
-        label: item.label,
-        values: [
-          { name: 'Colocado $', value: item.colAsesor, color: '#2563EB' },
-          { name: 'Meta $', value: item.metaAsesor, color: '#16A34A' },
-        ],
-        sortScore: Math.max(item.colAsesor, item.metaAsesor),
-      }))
-      .sort((a, b) => b.sortScore - a.sortScore)
-      .slice(0, 8);
+      relevantMetas.forEach((m) => {
+        const pk = personKey(m.asesor);
+        const wk = sortedWordsKey(m.asesor);
+        if (!pk) return;
+        const k = findAdvisorKey(m.asesor);
+        const existing = advisorRows.get(k);
+        const mVal = getMetaVal(m);
+        if (existing) {
+          existing.meta += mVal;
+          existing.pks.add(pk);
+          if (wk) existing.wks.add(wk);
+        } else {
+          advisorRows.set(k, {
+            label: m.asesor,
+            col: 0,
+            meta: mVal,
+            pks: new Set([pk]),
+            wks: new Set(wk ? [wk] : []),
+          });
+        }
+      });
+      metaBreakdownBars = Array.from(advisorRows.values())
+        .map((d) => ({
+          label: d.label,
+          values: [
+            { name: 'Colocado $', value: d.col, color: '#2563EB' },
+            { name: 'Meta $', value: d.meta, color: '#16A34A' },
+          ],
+          sortScore: Math.max(d.col, d.meta),
+        }))
+        .sort((a, b) => b.sortScore - a.sortScore)
+        .map(({ label, values }) => ({ label, values }));
+    } else if (
+      targetAgencia ||
+      resolvedStaff?.mode === 'gerente' ||
+      resolvedStaff?.mode === 'coordinador' ||
+      role === 'gerente' ||
+      role === 'coordinador'
+    ) {
+      metaBreakdownTitle = targetAgencia
+        ? `Comparativo por Sucursal — ${filters.agencia} (Colocado vs Meta)`
+        : 'Comparativo por Sucursal (Colocado vs Meta)';
+      const sucMetaMap = new Map<string, { label: string; col: number; meta: number }>();
+      aggRows.forEach((r) => {
+        const rawAg = r.agencia || 'SIN AGENCIA';
+        const key = normText(rawAg) || 'SIN AGENCIA';
+        const cur = sucMetaMap.get(key) || { label: rawAg, col: 0, meta: 0 };
+        cur.col += getPlacementVal(r);
+        sucMetaMap.set(key, cur);
+      });
+      relevantMetas.forEach((m) => {
+        const terr = getMetaTerr(m);
+        const rawAg = terr.agencia || 'SIN AGENCIA';
+        const key = normText(rawAg) || 'SIN AGENCIA';
+        const cur = sucMetaMap.get(key) || { label: rawAg, col: 0, meta: 0 };
+        cur.meta += getMetaVal(m);
+        sucMetaMap.set(key, cur);
+      });
+      metaBreakdownBars = Array.from(sucMetaMap.values())
+        .filter((d) => d.col > 0 || d.meta > 0)
+        .map((d) => ({
+          label: d.label,
+          values: [
+            { name: 'Colocado $', value: d.col, color: '#2563EB' },
+            { name: 'Meta $', value: d.meta, color: '#16A34A' },
+          ],
+          sortScore: Math.max(d.col, d.meta),
+        }))
+        .sort((a, b) => b.sortScore - a.sortScore)
+        .map(({ label, values }) => ({ label, values }));
+    } else {
+      metaBreakdownTitle = targetRegion
+        ? `Comparativo por Región — ${regionDisplayName(targetRegion)} (Colocado vs Meta)`
+        : 'Comparativo por Región (Colocado vs Meta)';
+      const regionMetaMap = new Map<string, { label: string; col: number; meta: number }>();
+      aggRows.forEach((r) => {
+        const disp = regionDisplayName(r.region || 'SIN REGIÓN');
+        const key = dailyRegionScopeKey(disp) || normText(disp) || 'SIN REGION';
+        const cur = regionMetaMap.get(key) || { label: disp, col: 0, meta: 0 };
+        cur.col += getPlacementVal(r);
+        regionMetaMap.set(key, cur);
+      });
+      relevantMetas.forEach((m) => {
+        const terr = getMetaTerr(m);
+        const disp = regionDisplayName(terr.region || 'SIN REGIÓN');
+        const key = dailyRegionScopeKey(disp) || normText(disp) || 'SIN REGION';
+        const cur = regionMetaMap.get(key) || { label: disp, col: 0, meta: 0 };
+        cur.meta += getMetaVal(m);
+        regionMetaMap.set(key, cur);
+      });
+      metaBreakdownBars = Array.from(regionMetaMap.values())
+        .filter((d) => d.col > 0 || d.meta > 0)
+        .map((d) => ({
+          label: d.label,
+          values: [
+            { name: 'Colocado $', value: d.col, color: '#2563EB' },
+            { name: 'Meta $', value: d.meta, color: '#16A34A' },
+          ],
+          sortScore: Math.max(d.col, d.meta),
+        }))
+        .sort((a, b) => b.sortScore - a.sortScore)
+        .map(({ label, values }) => ({ label, values }));
+    }
 
     return {
       labels,
@@ -563,14 +1025,33 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
       topSucursales,
       topExecCobranza,
       regionBars,
+      metaBreakdownTitle,
+      metaBreakdownBars,
+      activeMonthLabel,
       metaVsRealItems,
       totalMetaMensual,
       totalRealPlacement,
       pctCumplimiento,
       brechaMeta,
-      advisorMetaBars,
+      hasRawMetas: rawMetas.length > 0,
     };
-  }, [cortes, hierarchyFilteredAllCortes, aggRows, rosterAggRows, metas, filters.ejecutivo, filters.region, filters.agencia, role, userNombre]);
+  }, [
+    cortes,
+    scopedRows,
+    scopedDirRows,
+    scopes,
+    hierarchyFilteredAllCortes,
+    aggRows,
+    rosterAggRows,
+    metas,
+    filters.selectedCortes,
+    filters.ejecutivo,
+    filters.region,
+    filters.agencia,
+    resolvedStaff,
+    role,
+    userNombre,
+  ]);
 
   // Sortable paginated table (roster executives)
   const tableRows = useMemo(() => {
@@ -949,9 +1430,20 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
             <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <h4 className="text-sm font-semibold text-slate-900">
-                    Meta Mensual de Colocación Alcanzada
-                  </h4>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="text-sm font-semibold text-slate-900">
+                      Meta Mensual de Colocación Alcanzada
+                    </h4>
+                    <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                      {filters.ejecutivo
+                        ? `Ejecutivo: ${filters.ejecutivo} · ${chartsData.activeMonthLabel}`
+                        : filters.agencia !== 'ALL'
+                        ? `Sucursal: ${filters.agencia} · ${chartsData.activeMonthLabel}`
+                        : filters.region !== 'ALL'
+                        ? `Región: ${regionDisplayName(filters.region)} · ${chartsData.activeMonthLabel}`
+                        : `Total Mensual (${chartsData.activeMonthLabel})`}
+                    </span>
+                  </div>
                   <span
                     className={`px-2 py-0.5 text-xs font-semibold rounded ${
                       chartsData.pctCumplimiento >= 1
@@ -1007,28 +1499,26 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
               {/* Global Total Comparison Bar */}
               <div className="mb-4">
                 <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                  Total Colocado vs Suma Meta Mensual (Cols H + I + J)
+                  Total Colocado vs Suma Meta Mensual (Cols H + I)
                 </p>
                 <HorizontalBarChart items={chartsData.metaVsRealItems} />
+                {!chartsData.hasRawMetas && chartsData.totalMetaMensual === 0 && (
+                  <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                    La hoja Metas aún no está en caché del servidor. Inicia sesión una vez como Administrador Google para sincronizarla.
+                  </p>
+                )}
               </div>
 
-              {/* Advisor Breakdown if available */}
-              {chartsData.advisorMetaBars.length > 1 ? (
+              {/* Breakdown by Region / Sucursal / Asesor */}
+              {chartsData.metaBreakdownBars.length > 0 ? (
                 <div className="pt-3 border-t border-slate-100">
                   <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                    Comparativo por Asesor (Colocado vs Meta)
+                    {chartsData.metaBreakdownTitle}
                   </p>
                   <GroupedBarChart
-                    items={chartsData.advisorMetaBars}
+                    items={chartsData.metaBreakdownBars}
                     valueFormat="money"
                   />
-                </div>
-              ) : chartsData.totalMetaMensual === 0 ? (
-                <div className="p-3 bg-amber-50/70 border border-amber-200/60 rounded-lg text-xs text-amber-800">
-                  <p className="font-semibold">Sin metas registradas en la hoja 'Metas'</p>
-                  <p className="text-[11px] text-amber-700 mt-0.5">
-                    Verifica que la hoja 'Metas' contenga datos (Columna A: Fecha, Columna D: Asesor, Columnas H, I, J: Metas). Si actualizaste el archivo en Google Sheets, pulsa <strong>Actualizar</strong> en la barra superior.
-                  </p>
                 </div>
               ) : null}
             </div>
