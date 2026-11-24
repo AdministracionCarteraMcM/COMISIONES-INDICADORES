@@ -102,6 +102,266 @@ function saveMetasCacheToDisk(rows: MetaRow[]): void {
   }
 }
 
+interface AccessLogEntry {
+  id: string;
+  timestamp: string;
+  fecha_hora: string;
+  usuario: string;
+  nombre: string;
+  rol: Role | string;
+  metodo: string;
+  origen: string;
+  ip?: string;
+}
+
+const ACCESS_LOGS_PATH = path.join(process.cwd(), '.cache', 'access-logs.json');
+const ACCESS_LOG_SHEET_TITLE = 'LOG_ACCESOS';
+const MAX_ACCESS_LOGS = 2500;
+let cachedAccessLogs: AccessLogEntry[] | null = null;
+const verifiedAccessLogSheets = new Set<string>();
+
+function loadAccessLogsFromDisk(): AccessLogEntry[] {
+  if (cachedAccessLogs) return cachedAccessLogs;
+  try {
+    if (!fs.existsSync(ACCESS_LOGS_PATH)) {
+      cachedAccessLogs = [];
+      return cachedAccessLogs;
+    }
+    const raw = fs.readFileSync(ACCESS_LOGS_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    cachedAccessLogs = Array.isArray(parsed) ? (parsed as AccessLogEntry[]) : [];
+    return cachedAccessLogs;
+  } catch {
+    cachedAccessLogs = [];
+    return cachedAccessLogs;
+  }
+}
+
+function saveAccessLogsToDisk(entries: AccessLogEntry[]): void {
+  try {
+    const trimmed = entries.slice(0, MAX_ACCESS_LOGS);
+    cachedAccessLogs = trimmed;
+    fs.mkdirSync(path.dirname(ACCESS_LOGS_PATH), { recursive: true });
+    fs.writeFileSync(ACCESS_LOGS_PATH, JSON.stringify(trimmed), 'utf8');
+  } catch {
+    // non-blocking disk error
+  }
+}
+
+function formatMexicoDateTime(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat('es-MX', {
+      timeZone: 'America/Mexico_City',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
+function getClientIp(req: Request): string {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.trim()) {
+    return fwd.split(',')[0].trim();
+  }
+  return String(req.ip || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+}
+
+async function ensureAccessLogSheet(token: string, spreadsheetId: string): Promise<boolean> {
+  if (verifiedAccessLogSheets.has(spreadsheetId)) return true;
+  const meta = await googleFetch<{
+    sheets?: Array<{ properties?: { title?: string } }>;
+  }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+      spreadsheetId
+    )}?fields=sheets.properties.title`,
+    token
+  );
+  const exists = (meta.sheets || []).some(
+    (s) => String(s.properties?.title || '').trim().toUpperCase() === ACCESS_LOG_SHEET_TITLE
+  );
+  if (!exists) {
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          requests: [{ addSheet: { properties: { title: ACCESS_LOG_SHEET_TITLE } } }],
+        }),
+      }
+    );
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+        spreadsheetId
+      )}/values/${encodeURIComponent(`'${ACCESS_LOG_SHEET_TITLE}'!A1:I1`)}?valueInputOption=USER_ENTERED`,
+      token,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          values: [
+            ['ID_ACCESO', 'FECHA_HORA', 'TIMESTAMP', 'USUARIO', 'NOMBRE', 'ROL', 'METODO', 'ORIGEN', 'IP'],
+          ],
+        }),
+      }
+    );
+  }
+  verifiedAccessLogSheets.add(spreadsheetId);
+  return true;
+}
+
+async function syncAccessLogToSheet(
+  entry: AccessLogEntry,
+  spreadsheetId: string,
+  tokenHint?: string
+): Promise<void> {
+  try {
+    const token = tokenHint || (await resolveGoogleAccessToken());
+    if (!token) return;
+    await ensureAccessLogSheet(token, spreadsheetId);
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+        spreadsheetId
+      )}/values/${encodeURIComponent(`'${ACCESS_LOG_SHEET_TITLE}'!A:I`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          values: [
+            [
+              entry.id,
+              entry.fecha_hora,
+              entry.timestamp,
+              entry.usuario,
+              entry.nombre,
+              entry.rol,
+              entry.metodo,
+              entry.origen,
+              entry.ip || '',
+            ],
+          ],
+        }),
+      }
+    );
+  } catch {
+    // non-blocking sheet sync error
+  }
+}
+
+async function batchAppendAccessLogsToSheet(
+  entries: AccessLogEntry[],
+  spreadsheetId: string,
+  token: string
+): Promise<void> {
+  if (!entries.length) return;
+  try {
+    await ensureAccessLogSheet(token, spreadsheetId);
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+        spreadsheetId
+      )}/values/${encodeURIComponent(`'${ACCESS_LOG_SHEET_TITLE}'!A:I`)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          values: entries.map((entry) => [
+            entry.id,
+            entry.fecha_hora,
+            entry.timestamp,
+            entry.usuario,
+            entry.nombre,
+            entry.rol,
+            entry.metodo,
+            entry.origen,
+            entry.ip || '',
+          ]),
+        }),
+      }
+    );
+  } catch {
+    // non-blocking backfill error
+  }
+}
+
+async function readAccessLogsFromSheet(
+  token: string,
+  spreadsheetId: string
+): Promise<AccessLogEntry[] | null> {
+  try {
+    const meta = await googleFetch<{
+      sheets?: Array<{ properties?: { title?: string } }>;
+    }>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+        spreadsheetId
+      )}?fields=sheets.properties.title`,
+      token
+    );
+    const exists = (meta.sheets || []).some(
+      (s) => String(s.properties?.title || '').trim().toUpperCase() === ACCESS_LOG_SHEET_TITLE
+    );
+    if (!exists) return [];
+    verifiedAccessLogSheets.add(spreadsheetId);
+    const vr = await googleFetch<{ values?: string[][] }>(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
+        spreadsheetId
+      )}/values/${encodeURIComponent(`'${ACCESS_LOG_SHEET_TITLE}'!A2:I2501`)}`,
+      token
+    );
+    return (vr.values || [])
+      .filter((r) => r && (r[1] || r[3]))
+      .map((r, idx) => ({
+        id: String(r[0] || `sheet-${idx}`),
+        fecha_hora: String(r[1] || ''),
+        timestamp: String(r[2] || ''),
+        usuario: String(r[3] || ''),
+        nombre: String(r[4] || ''),
+        rol: String(r[5] || ''),
+        metodo: String(r[6] || ''),
+        origen: String(r[7] || ''),
+        ip: String(r[8] || ''),
+      }));
+  } catch {
+    return null;
+  }
+}
+
+function recordAccessLogin(params: {
+  req: Request;
+  usuario: string;
+  nombre: string;
+  rol: Role | string;
+  metodo: string;
+  origen: string;
+  spreadsheetId?: string;
+  googleTokenHint?: string;
+}): void {
+  const now = new Date();
+  const entry: AccessLogEntry = {
+    id: `${now.getTime()}-${crypto.randomBytes(4).toString('hex')}`,
+    timestamp: now.toISOString(),
+    fecha_hora: formatMexicoDateTime(now),
+    usuario: params.usuario,
+    nombre: params.nombre,
+    rol: params.rol,
+    metodo: params.metodo,
+    origen: params.origen,
+    ip: getClientIp(params.req),
+  };
+  const current = loadAccessLogsFromDisk();
+  saveAccessLogsToDisk([entry, ...current]);
+  void syncAccessLogToSheet(
+    entry,
+    params.spreadsheetId || DEFAULT_SPREADSHEET_ID,
+    params.googleTokenHint
+  );
+}
+
 function sortedWordsKey(v: unknown): string {
   return String(v == null ? '' : v)
     .toUpperCase()
@@ -2398,6 +2658,17 @@ async function startServer() {
         const sessionToken = signSessionToken(session);
         setSessionCookie(req, res, sessionToken);
 
+        recordAccessLogin({
+          req,
+          usuario: user.username,
+          nombre: user.nombre,
+          rol: user.role,
+          metodo: 'Usuario McM',
+          origen: 'Google Sheets',
+          spreadsheetId,
+          googleTokenHint: token,
+        });
+
         const scopedData = scopePayloadForSession(raw, session);
         res.json({ ok: true, session: publicSessionView(session), sessionToken, data: scopedData });
         return;
@@ -2415,6 +2686,17 @@ async function startServer() {
         };
         const sessionToken = signSessionToken(session);
         setSessionCookie(req, res, sessionToken);
+
+        recordAccessLogin({
+          req,
+          usuario: asResult.sessionInfo.username,
+          nombre: asResult.sessionInfo.nombre,
+          rol: asResult.sessionInfo.role,
+          metodo: 'Usuario McM',
+          origen: 'Apps Script',
+          spreadsheetId,
+        });
+
         res.json({
           ok: true,
           session: publicSessionView(session),
@@ -2534,6 +2816,17 @@ async function startServer() {
       };
       const sessionToken = signSessionToken(session);
       setSessionCookie(req, res, sessionToken);
+
+      recordAccessLogin({
+        req,
+        usuario: username,
+        nombre,
+        rol: role,
+        metodo: 'Google Workspace',
+        origen: 'Google Sheets',
+        spreadsheetId,
+        googleTokenHint: token,
+      });
 
       const scopedData = scopePayloadForSession(raw, session);
       res.json({ ok: true, session: publicSessionView(session), sessionToken, data: scopedData });
@@ -2798,6 +3091,87 @@ async function startServer() {
       res.json({ ok: true, count: cleaned.length });
     } catch {
       res.status(500).json({ ok: false, error: 'No se pudo sincronizar caché de metas.' });
+    }
+  });
+
+  // 3d. Admin Access Logs (Bitácora de Accesos)
+  app.get('/api/admin/access-logs', async (req: Request, res: Response) => {
+    try {
+      const session = readSessionFromReq(req);
+      if (!session || session.role !== 'admin') {
+        res.status(403).json({
+          ok: false,
+          error: 'Solo el perfil Administrador puede consultar la bitácora de accesos.',
+        });
+        return;
+      }
+
+      const spreadsheetId = String(req.query.spreadsheetId || DEFAULT_SPREADSHEET_ID).trim();
+      const authHeader = req.headers.authorization;
+      const bearer =
+        typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+          ? authHeader.slice(7).trim()
+          : undefined;
+
+      const diskLogs = loadAccessLogsFromDisk();
+      const gToken = await resolveGoogleAccessToken(bearer, session);
+      let sheetLogs: AccessLogEntry[] | null = null;
+      if (gToken) {
+        try {
+          await ensureAccessLogSheet(gToken, spreadsheetId);
+        } catch {
+          // ignore ensure failure, readAccessLogsFromSheet will return null if inaccessible
+        }
+        sheetLogs = await readAccessLogsFromSheet(gToken, spreadsheetId);
+        if (sheetLogs !== null) {
+          const inSheetKeys = new Set(
+            sheetLogs.map((e) =>
+              e.id && !e.id.startsWith('sheet-') ? e.id : `${e.timestamp}|${e.usuario}`
+            )
+          );
+          const missingInSheet = diskLogs
+            .filter(
+              (e) =>
+                !inSheetKeys.has(
+                  e.id && !e.id.startsWith('sheet-') ? e.id : `${e.timestamp}|${e.usuario}`
+                )
+            )
+            .slice()
+            .reverse();
+          if (missingInSheet.length > 0) {
+            await batchAppendAccessLogsToSheet(missingInSheet, spreadsheetId, gToken);
+            sheetLogs = [...sheetLogs, ...missingInSheet];
+          }
+        }
+      }
+
+      const mergedMap = new Map<string, AccessLogEntry>();
+      const pushEntry = (e: AccessLogEntry) => {
+        const key = e.id && !e.id.startsWith('sheet-') ? e.id : `${e.timestamp}|${e.usuario}`;
+        if (!mergedMap.has(key)) mergedMap.set(key, e);
+      };
+      diskLogs.forEach(pushEntry);
+      if (sheetLogs) {
+        sheetLogs.forEach(pushEntry);
+      }
+
+      const merged = Array.from(mergedMap.values()).sort((a, b) =>
+        (b.timestamp || '').localeCompare(a.timestamp || '')
+      );
+      if (sheetLogs && merged.length > diskLogs.length) {
+        saveAccessLogsToDisk(merged);
+      }
+
+      res.json({
+        ok: true,
+        logs: merged,
+        sheetsSynced: sheetLogs !== null,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Error consultando bitácora de accesos.',
+      });
     }
   });
 

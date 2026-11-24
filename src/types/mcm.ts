@@ -225,6 +225,18 @@ export interface LogEntry {
   id_operacion: string;
 }
 
+export interface AccessLogEntry {
+  id: string;
+  timestamp: string;
+  fecha_hora: string;
+  usuario: string;
+  nombre: string;
+  rol: Role | string;
+  metodo: string;
+  origen: string;
+  ip?: string;
+}
+
 export interface DriveSpreadsheet {
   id: string;
   name: string;

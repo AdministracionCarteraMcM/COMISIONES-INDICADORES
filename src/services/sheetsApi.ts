@@ -1,4 +1,5 @@
 import type {
+  AccessLogEntry,
   BackupInfo,
   ComisionEjecutivoRow,
   CorteRow,
@@ -1004,6 +1005,36 @@ export async function fetchPortalAdminExtras(role: Role): Promise<{
   return {
     usuarios: res.data.usuarios || [],
     backups: res.data.backups || [],
+  };
+}
+
+export async function fetchAdminAccessLogs(
+  googleAccessToken?: string | null,
+  spreadsheetId = DEFAULT_SPREADSHEET_ID
+): Promise<{
+  logs: AccessLogEntry[];
+  sheetsSynced: boolean;
+}> {
+  const headers: Record<string, string> = {};
+  if (activeMcMSessionToken) {
+    headers['X-McM-Session'] = activeMcMSessionToken;
+  }
+  if (googleAccessToken && googleAccessToken !== '__SERVER_SESSION__') {
+    headers.Authorization = `Bearer ${googleAccessToken}`;
+  }
+  const qs = `?spreadsheetId=${encodeURIComponent(spreadsheetId)}`;
+  const res = await fetchApiJson<{
+    ok: boolean;
+    error?: string;
+    logs?: AccessLogEntry[];
+    sheetsSynced?: boolean;
+  }>(`/api/admin/access-logs${qs}`, { credentials: 'include', headers }, 0, 20_000);
+  if (!res.ok) {
+    throw new Error(res.error || `Error cargando bitácora de accesos (${res.status})`);
+  }
+  return {
+    logs: res.data.logs || [],
+    sheetsSynced: Boolean(res.data.sheetsSynced),
   };
 }
 

@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type {
+  AccessLogEntry,
   ComisionEjecutivoRow,
   DirectorioRow,
   IndicadorRow,
@@ -509,4 +510,34 @@ export function exportActiveUsersPDF(users: UserRecord[]) {
     body: users.map((u) => [u.username, u.nombre, ROLE_LABELS[u.role] || u.role, u.estado]),
   });
   doc.save('Usuarios_Activos_McM.pdf');
+}
+
+export function exportAccessLogsExcel(logs: AccessLogEntry[]) {
+  const data = logs.map((l) => ({
+    'Fecha y Hora': l.fecha_hora,
+    Nombre: l.nombre,
+    Usuario: l.usuario,
+    Rol: ROLE_LABELS[l.rol as keyof typeof ROLE_LABELS] || l.rol,
+    Método: l.metodo,
+    Origen: l.origen,
+    IP: l.ip || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Accesos');
+  XLSX.writeFile(wb, 'Bitacora_Accesos_McM.xlsx');
+}
+
+export function exportAccessLogsCSV(logs: AccessLogEntry[]) {
+  const headers = ['Fecha y Hora', 'Nombre', 'Usuario', 'Rol', 'Método', 'Origen', 'IP'];
+  const body = logs.map((l) => [
+    l.fecha_hora,
+    l.nombre,
+    l.usuario,
+    ROLE_LABELS[l.rol as keyof typeof ROLE_LABELS] || l.rol,
+    l.metodo,
+    l.origen,
+    l.ip || '',
+  ]);
+  downloadCsv(headers, body, 'Bitacora_Accesos_McM.csv');
 }
