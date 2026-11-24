@@ -1297,24 +1297,26 @@ function scopePayloadForSession(
         raw.scopeRegional
           .filter((s) => personKey(s.persona) === pk)
           .map((s) => dailyRegionScopeKey(s.region))
+          .filter(Boolean)
       );
-      return rows.filter((r) => allowed.has(dailyRegionScopeKey(r.region)));
+      return rows.filter(
+        (r) =>
+          allowed.has(dailyRegionScopeKey(r.region)) &&
+          (r.rol_persona !== 'regional' || personKey(r.empleado) === pk)
+      );
     }
     if (role === 'gerente') {
       const allowed = new Set(
         raw.scopeGerente
           .filter((s) => personKey(s.persona) === pk)
           .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
-      );
-      const regions = new Set(
-        raw.scopeGerente
-          .filter((s) => personKey(s.persona) === pk)
-          .map((s) => dailyRegionScopeKey(s.region))
+          .filter((k) => k !== '|')
       );
       return rows.filter(
         (r) =>
-          allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`) ||
-          (r.rol_persona === 'regional' && regions.has(dailyRegionScopeKey(r.region)))
+          allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`) &&
+          (r.rol_persona === 'coordinador' ||
+            (r.rol_persona === 'gerente' && personKey(r.empleado) === pk))
       );
     }
     if (role === 'coordinador') {
@@ -1322,9 +1324,13 @@ function scopePayloadForSession(
         raw.scopeCoordinador
           .filter((s) => personKey(s.persona) === pk)
           .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+          .filter((k) => k !== '|')
       );
-      return rows.filter((r) =>
-        allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`)
+      return rows.filter(
+        (r) =>
+          r.rol_persona === 'coordinador' &&
+          personKey(r.empleado) === pk &&
+          allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`)
       );
     }
     return [];
@@ -1460,6 +1466,39 @@ function scopePayloadForSession(
     });
   })();
 
+  const scopedRegionalEntries = isPrivilegedMonthly
+    ? raw.scopeRegional
+    : role === 'regional'
+    ? raw.scopeRegional.filter((s) => personKey(s.persona) === pk)
+    : [];
+  const regionalScopeRegions = new Set(
+    scopedRegionalEntries.map((s) => dailyRegionScopeKey(s.region)).filter(Boolean)
+  );
+  const gerenteScopePairs = new Set(
+    raw.scopeGerente
+      .filter((s) => personKey(s.persona) === pk)
+      .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+      .filter((k) => k !== '|')
+  );
+  const scopedGerenteEntries = isPrivilegedMonthly
+    ? raw.scopeGerente
+    : role === 'regional'
+    ? raw.scopeGerente.filter((s) => regionalScopeRegions.has(dailyRegionScopeKey(s.region)))
+    : role === 'gerente'
+    ? raw.scopeGerente.filter((s) => personKey(s.persona) === pk)
+    : [];
+  const scopedCoordinadorEntries = isPrivilegedMonthly
+    ? raw.scopeCoordinador
+    : role === 'regional'
+    ? raw.scopeCoordinador.filter((s) => regionalScopeRegions.has(dailyRegionScopeKey(s.region)))
+    : role === 'gerente'
+    ? raw.scopeCoordinador.filter((s) =>
+        gerenteScopePairs.has(`${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+      )
+    : role === 'coordinador'
+    ? raw.scopeCoordinador.filter((s) => personKey(s.persona) === pk)
+    : [];
+
   return {
     spreadsheetId: raw.spreadsheetId,
     spreadsheetTitle: raw.spreadsheetTitle,
@@ -1473,7 +1512,7 @@ function scopePayloadForSession(
     gerenteCom: role === 'gerente' || role === 'regional' || isPrivilegedMonthly
       ? scopeDir(raw.gerenteCom)
       : [],
-    regionalCom: role === 'gerente' || role === 'regional' || isPrivilegedMonthly
+    regionalCom: role === 'regional' || isPrivilegedMonthly
       ? scopeDir(raw.regionalCom)
       : [],
     // Strip passwords even for Admin!
@@ -1486,10 +1525,9 @@ function scopePayloadForSession(
         }))
       : [],
     scopeEjecutivo: isAdmin ? raw.scopeEjecutivo : [],
-    scopeCoordinador:
-      isPrivilegedMonthly || role === 'coordinador' ? raw.scopeCoordinador : [],
-    scopeGerente: isPrivilegedMonthly || role === 'gerente' ? raw.scopeGerente : [],
-    scopeRegional: isPrivilegedMonthly || role === 'regional' ? raw.scopeRegional : [],
+    scopeCoordinador: scopedCoordinadorEntries,
+    scopeGerente: scopedGerenteEntries,
+    scopeRegional: scopedRegionalEntries,
     diariosHeaders: raw.diariosHeaders,
     diarios: scopeDiarios(),
     normalidadRaw: isPrivilegedMonthly ? raw.normalidadRaw : [],
@@ -1742,9 +1780,30 @@ function mapAppsScriptPayloadToPortal(
     }
   );
 
-  const coordinadorCom = dirAll.filter((d) => d.rol_persona === 'coordinador');
-  const gerenteCom = dirAll.filter((d) => d.rol_persona === 'gerente');
-  const regionalCom = dirAll.filter((d) => d.rol_persona === 'regional');
+  const isPrivileged = role === 'admin' || role === 'directivo' || role === 'direccion';
+  const isAdmin = role === 'admin';
+  const userPk = personKey(nombre);
+
+  const coordinadorCom = dirAll.filter(
+    (d) =>
+      d.rol_persona === 'coordinador' &&
+      (isPrivileged ||
+        role === 'regional' ||
+        role === 'gerente' ||
+        (role === 'coordinador' && personKey(d.empleado) === userPk))
+  );
+  const gerenteCom = dirAll.filter(
+    (d) =>
+      d.rol_persona === 'gerente' &&
+      (isPrivileged ||
+        role === 'regional' ||
+        (role === 'gerente' && personKey(d.empleado) === userPk))
+  );
+  const regionalCom = dirAll.filter(
+    (d) =>
+      d.rol_persona === 'regional' &&
+      (isPrivileged || (role === 'regional' && personKey(d.empleado) === userPk))
+  );
 
   // Synthesize matching scope entries from the authorized rows returned by Apps Script
   const buildScopesFromDir = (
@@ -1783,9 +1842,6 @@ function mapAppsScriptPayloadToPortal(
     MODELO_COMISION_PAGADO: normStr(r.MODELO_COMISION_PAGADO || r.TIPO_ESQUEMA),
   }));
 
-  const isPrivileged = role === 'admin' || role === 'directivo' || role === 'direccion';
-  const isAdmin = role === 'admin';
-
   const usuarios = isAdmin
     ? adminUsers
         .map((u) => ({
@@ -1812,11 +1868,13 @@ function mapAppsScriptPayloadToPortal(
     : [];
 
   const scopeCoord =
-    isPrivileged || role === 'coordinador'
+    isPrivileged || role === 'regional' || role === 'gerente' || role === 'coordinador'
       ? buildScopesFromDir(coordinadorCom, false)
       : [];
   const scopeGer =
-    isPrivileged || role === 'gerente' ? buildScopesFromDir(gerenteCom, false) : [];
+    isPrivileged || role === 'regional' || role === 'gerente'
+      ? buildScopesFromDir(gerenteCom, false)
+      : [];
   const scopeReg =
     isPrivileged || role === 'regional' ? buildScopesFromDir(regionalCom, true) : [];
 
@@ -2149,12 +2207,18 @@ async function loadViaAppsScriptAdminExtras(token: string, role: Role) {
     return { usuarios: [], backups: [] };
   }
   const [usuarios, backups] = await Promise.all([
-    callAppsScript<{ users?: Array<Record<string, unknown>> }>({
-      action: 'admin_users',
-      session_token: token,
-    })
+    callAppsScript<{
+      users?: Array<Record<string, unknown>>;
+      usuarios?: Array<Record<string, unknown>>;
+    }>(
+      {
+        action: 'admin_users',
+        session_token: token,
+      },
+      55_000
+    )
       .then((r) =>
-        (r.users || [])
+        (r.users || r.usuarios || [])
           .map((u) => ({
             username: normStr(u.username).toLowerCase(),
             role: normalizeRole(u.role),
@@ -2166,10 +2230,13 @@ async function loadViaAppsScriptAdminExtras(token: string, role: Role) {
           .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
       )
       .catch(() => []),
-    callAppsScript<{ backups?: Array<Record<string, unknown>> }>({
-      action: 'list_backups',
-      session_token: token,
-    })
+    callAppsScript<{ backups?: Array<Record<string, unknown>> }>(
+      {
+        action: 'list_backups',
+        session_token: token,
+      },
+      30_000
+    )
       .then((r) =>
         (r.backups || []).map((b, idx) => ({
           sheetId: idx + 1,
@@ -2626,11 +2693,43 @@ async function startServer() {
         res.status(403).json({ ok: false, error: 'Solo Administrador.' });
         return;
       }
+      const spreadsheetId = String(req.query.spreadsheetId || DEFAULT_SPREADSHEET_ID).trim();
+      const loadFromGoogleToken = async () => {
+        const gToken = await resolveGoogleAccessToken(undefined, session);
+        if (!gToken) return null;
+        const raw = await loadRawSpreadsheetCached(gToken, spreadsheetId);
+        return {
+          usuarios: raw.usuarios.map((u) => ({
+            username: u.username,
+            role: u.role,
+            nombre: u.nombre,
+            estado: u.estado,
+          })),
+          backups: raw.backups,
+        };
+      };
+
       if (!session.appsScriptToken || !hasAppsScriptConfigured()) {
+        const gExtras = await loadFromGoogleToken().catch(() => null);
+        if (gExtras) {
+          res.json({ ok: true, ...gExtras });
+          return;
+        }
         res.json({ ok: true, empty: true });
         return;
       }
       const extras = await loadViaAppsScriptAdminExtras(session.appsScriptToken, session.role);
+      if (extras.usuarios.length === 0) {
+        const gExtras = await loadFromGoogleToken().catch(() => null);
+        if (gExtras && gExtras.usuarios.length > 0) {
+          res.json({
+            ok: true,
+            usuarios: gExtras.usuarios,
+            backups: extras.backups.length ? extras.backups : gExtras.backups,
+          });
+          return;
+        }
+      }
       res.json({ ok: true, ...extras });
     } catch (err) {
       const status = (err as { status?: number })?.status || 500;

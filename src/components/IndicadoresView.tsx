@@ -150,8 +150,12 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
   );
 
   const resolvedStaff = useMemo(
-    () => resolveStaffSearchScope(filters.ejecutivo, scopedDirRows, scopes),
-    [filters.ejecutivo, scopedDirRows, scopes]
+    () =>
+      resolveStaffSearchScope(filters.ejecutivo, scopedDirRows, scopes, {
+        region: filters.region,
+        agencia: filters.agencia,
+      }),
+    [filters.ejecutivo, filters.region, filters.agencia, scopedDirRows, scopes]
   );
 
   // Filter rows by hierarchy + staff search (all cortes, used for historical trend)

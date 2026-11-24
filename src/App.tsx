@@ -52,6 +52,7 @@ import {
   regionMatchesFilter,
   scopeDailyRows,
   scopeDirectorioRows,
+  scopeRoleScopes,
   scopeWeeklyRows,
 } from './utils/mcmData';
 import {
@@ -120,6 +121,8 @@ export default function App() {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+
   const pushToast = useCallback((t: Omit<ToastMessage, 'id'>) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setToasts((prev) => [...prev, { ...t, id }]);
@@ -129,7 +132,15 @@ export default function App() {
   }, []);
 
   const applyLoadedPayload = useCallback((loaded: RawSpreadsheetData) => {
-    setData(loaded);
+    setData((prev) =>
+      prev && loaded.preScoped && loaded.usuarios.length === 0 && prev.usuarios.length > 0
+        ? {
+            ...loaded,
+            usuarios: prev.usuarios,
+            backups: loaded.backups.length ? loaded.backups : prev.backups,
+          }
+        : loaded
+    );
     setLastLoadedAt(
       new Date().toLocaleTimeString('es-MX', {
         hour: '2-digit',
@@ -295,6 +306,35 @@ export default function App() {
     []
   );
 
+  const loadAdminExtrasSection = useCallback(
+    async (role: Role, reqEpoch?: number) => {
+      if (role !== 'admin') return;
+      const epoch = reqEpoch ?? extrasReqRef.current;
+      setAdminUsersLoading(true);
+      try {
+        const extras = await fetchPortalAdminExtras(role);
+        if (extras && extrasReqRef.current === epoch) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  usuarios: extras.usuarios.length ? extras.usuarios : prev.usuarios,
+                  backups: extras.backups.length ? extras.backups : prev.backups,
+                }
+              : prev
+          );
+        }
+      } catch {
+        // non-blocking
+      } finally {
+        if (extrasReqRef.current === epoch) {
+          setAdminUsersLoading(false);
+        }
+      }
+    },
+    []
+  );
+
   const hydrateExtrasInBackground = useCallback(
     (role: Role) => {
       const epoch = ++extrasReqRef.current;
@@ -308,6 +348,12 @@ export default function App() {
         setNormalidadLoading(false);
         setNormalidadError('');
       }
+
+      // Cargar catálogo de usuarios/respaldos de administrador en paralelo desde el inicio
+      if (role === 'admin') {
+        void loadAdminExtrasSection(role, epoch);
+      }
+
       void (async () => {
         // 1. Carga rápida del último corte diario
         const latestDaily = await loadDailySection({ reqEpoch: epoch });
@@ -326,31 +372,10 @@ export default function App() {
         // 3. Reportes mensuales de NORMALIDAD (por defecto solo el mes más actual, solo Dirección / Administrador)
         if (canSeeNormalidad) {
           await loadNormalidadSection(role, undefined, epoch);
-          if (extrasReqRef.current !== epoch) return;
-        }
-
-        // 4. Catálogo admin (usuarios / backups) si aplica
-        if (role === 'admin') {
-          try {
-            const extras = await fetchPortalAdminExtras(role);
-            if (extras && extrasReqRef.current === epoch) {
-              setData((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      usuarios: extras.usuarios.length ? extras.usuarios : prev.usuarios,
-                      backups: extras.backups.length ? extras.backups : prev.backups,
-                    }
-                  : prev
-              );
-            }
-          } catch {
-            // non-blocking
-          }
         }
       })();
     },
-    [loadDailySection, loadNormalidadSection]
+    [loadAdminExtrasSection, loadDailySection, loadNormalidadSection]
   );
 
   const refreshPortalData = useCallback(
@@ -579,13 +604,18 @@ export default function App() {
 
   // Scoped datasets (server already strictly filtered for real non-admin users;
   // client filter also powers Admin's Vista/Rol live preview simulator)
-  const scopes = useMemo(
+  const rawScopes = useMemo(
     () => ({
       coordinador: data?.scopeCoordinador || [],
       gerente: data?.scopeGerente || [],
       regional: data?.scopeRegional || [],
     }),
     [data]
+  );
+
+  const scopedScopes = useMemo(
+    () => scopeRoleScopes(rawScopes, effectiveSession.role, effectiveSession.nombre),
+    [rawScopes, effectiveSession.role, effectiveSession.nombre]
   );
 
   const scopedIndicadores = useMemo(
@@ -598,9 +628,9 @@ export default function App() {
             data.indicadores,
             effectiveSession.role,
             effectiveSession.nombre,
-            scopes
+            rawScopes
           ),
-    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]
+    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, rawScopes]
   );
 
   const scopedEjecutivoCom = useMemo(
@@ -613,22 +643,21 @@ export default function App() {
             data.ejecutivoCom,
             effectiveSession.role,
             effectiveSession.nombre,
-            scopes
+            rawScopes
           ),
-    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]
+    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, rawScopes]
   );
 
   const scopedDirectorioCom = useMemo(() => {
     if (!data) return [];
     const all = [...data.coordinadorCom, ...data.gerenteCom, ...data.regionalCom];
-    if (data.preScoped && !isSimulatingRole) return all;
     return scopeDirectorioRows(
       all,
       effectiveSession.role,
       effectiveSession.nombre,
-      scopes
+      rawScopes
     );
-  }, [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]);
+  }, [data, effectiveSession.role, effectiveSession.nombre, rawScopes]);
 
   const scopedDaily = useMemo(
     () =>
@@ -640,11 +669,11 @@ export default function App() {
             data.diarios,
             effectiveSession.role,
             effectiveSession.nombre,
-            scopes,
+            rawScopes,
             data.gerenteCom,
             data.regionalCom
           ),
-    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]
+    [data, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, rawScopes]
   );
 
   const scopedMetas = useMemo(() => {
@@ -678,7 +707,7 @@ export default function App() {
       [
         ...scopedIndicadores.map((r) => dailyRegionScopeKey(r.region)),
         ...(role === 'regional'
-          ? scopes.regional
+          ? scopedScopes.regional
               .filter((s) => personKey(s.persona) === pk || (pkWords !== '' && sortWords(s.persona) === pkWords))
               .map((s) => dailyRegionScopeKey(s.region))
           : []),
@@ -704,7 +733,7 @@ export default function App() {
       }
       return Boolean(ag && allowedAgencies.has(normText(ag)));
     });
-  }, [data, scopedIndicadores, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopes]);
+  }, [data, scopedIndicadores, isSimulatingRole, effectiveSession.role, effectiveSession.nombre, scopedScopes]);
 
   const filterOptions = useMemo(() => {
     const src =
@@ -727,49 +756,130 @@ export default function App() {
     ).sort();
     const statuses = Array.from(new Set(src.map((r) => r.estatus).filter(Boolean))).sort();
 
-    const staffMap = new Map<string, string>();
-    // Prioritize Regional -> Gerente -> Coordinador -> Ejecutivo labels
+    const staffMap = new Map<
+      string,
+      { name: string; roleHint: string; priority: number }
+    >();
+    const addStaff = (name: string | undefined, roleHint: string, priority: number) => {
+      const clean = (name || '').trim();
+      if (!clean || clean === '-') return;
+      const pk = personKey(clean);
+      if (!pk) return;
+      const prev = staffMap.get(pk);
+      if (!prev || priority > prev.priority) {
+        staffMap.set(pk, { name: clean, roleHint, priority });
+      }
+    };
+
+    const userPk = personKey(effectiveSession.nombre);
+    const activeAgNorm = filters.agencia !== 'ALL' ? normText(filters.agencia) : '';
+
+    // Prioritize Regional -> Gerente -> Coordinador -> Ejecutivo labels, strictly within role + active filters
     scopedDirectorioCom.forEach((d) => {
       if (!d.empleado) return;
+      if (!regionMatchesFilter(d.region, filters.region)) return;
+      if (activeAgNorm) {
+        if (d.rol_persona === 'regional') return;
+        if (normText(d.agencia) !== activeAgNorm) return;
+      }
+      if (filters.estatus !== 'ALL' && d.estatus && d.estatus !== filters.estatus) {
+        return;
+      }
+      const priority =
+        d.rol_persona === 'regional' ? 4 : d.rol_persona === 'gerente' ? 3 : 2;
       const lbl =
         d.rol_persona === 'regional'
           ? 'Gerente Regional'
           : d.rol_persona === 'gerente'
           ? 'Gerente'
           : 'Coordinador';
-      if (!staffMap.has(d.empleado) || d.rol_persona === 'regional') {
-        staffMap.set(d.empleado, lbl);
-      }
+      addStaff(d.empleado, lbl, priority);
     });
-    scopes.regional.forEach((s) => {
-      if (s.persona && !staffMap.has(s.persona)) {
-        staffMap.set(s.persona, 'Gerente Regional');
-      }
+
+    if (!activeAgNorm) {
+      scopedScopes.regional.forEach((s) => {
+        if (!regionMatchesFilter(s.region, filters.region)) return;
+        addStaff(s.persona, 'Gerente Regional', 4);
+      });
+    }
+    scopedScopes.gerente.forEach((s) => {
+      if (!regionMatchesFilter(s.region, filters.region)) return;
+      if (activeAgNorm && normText(s.agencia) !== activeAgNorm) return;
+      addStaff(s.persona, 'Gerente', 3);
     });
-    scopes.gerente.forEach((s) => {
-      if (s.persona && !staffMap.has(s.persona)) {
-        staffMap.set(s.persona, 'Gerente');
-      }
+    scopedScopes.coordinador.forEach((s) => {
+      if (!regionMatchesFilter(s.region, filters.region)) return;
+      if (activeAgNorm && normText(s.agencia) !== activeAgNorm) return;
+      addStaff(s.persona, 'Coordinador', 2);
     });
-    scopes.coordinador.forEach((s) => {
-      if (s.persona && !staffMap.has(s.persona)) {
-        staffMap.set(s.persona, 'Coordinador');
-      }
-    });
+
     src.forEach((r) => {
-      if (r.coordinador && r.coordinador !== '-' && !staffMap.has(r.coordinador)) {
-        staffMap.set(r.coordinador, 'Coordinador');
+      if (!regionMatchesFilter(r.region, filters.region)) return;
+      if (filters.agencia !== 'ALL' && r.agencia !== filters.agencia) return;
+      if (filters.estatus !== 'ALL' && r.estatus !== filters.estatus) return;
+      if (
+        r.coordinador &&
+        r.coordinador !== '-' &&
+        (effectiveSession.role !== 'coordinador' || personKey(r.coordinador) === userPk)
+      ) {
+        addStaff(r.coordinador, 'Coordinador', 2);
       }
-      if (r.ejecutivo && !staffMap.has(r.ejecutivo)) {
-        staffMap.set(r.ejecutivo, 'Ejecutivo');
+      if (r.ejecutivo) {
+        addStaff(r.ejecutivo, 'Ejecutivo', 1);
       }
     });
-    const staffOptions = Array.from(staffMap.entries())
-      .map(([name, roleHint]) => ({ name, roleHint }))
+
+    const staffOptions = Array.from(staffMap.values())
+      .map(({ name, roleHint }) => ({ name, roleHint }))
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
     return { regions, agencies, statuses, staffOptions };
-  }, [activeTab, scopedIndicadores, scopedEjecutivoCom, scopedDirectorioCom, scopes, filters.region]);
+  }, [
+    activeTab,
+    scopedIndicadores,
+    scopedEjecutivoCom,
+    scopedDirectorioCom,
+    scopedScopes,
+    filters.region,
+    filters.agencia,
+    filters.estatus,
+    effectiveSession.role,
+    effectiveSession.nombre,
+  ]);
+
+  const adminSimulationUsers = useMemo(() => {
+    if (!isTrueAdmin || !data) return [];
+    if (data.usuarios.length > 0) return data.usuarios;
+
+    // Fallback profiles from scopes/indicadores while USUARIOS finishes loading or if unavailable
+    const map = new Map<string, { username: string; role: Role; nombre: string; estado: 'activo' }>();
+    const addProfile = (nombre: string | undefined, role: Role) => {
+      const clean = (nombre || '').trim().toUpperCase();
+      if (!clean || clean === '-') return;
+      const pk = personKey(clean);
+      if (!pk) return;
+      const key = `${role}|${pk}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          username: `${role}:${pk.toLowerCase()}`,
+          role,
+          nombre: clean,
+          estado: 'activo',
+        });
+      }
+    };
+    data.scopeRegional.forEach((s) => addProfile(s.persona, 'regional'));
+    data.regionalCom.forEach((d) => addProfile(d.empleado, 'regional'));
+    data.scopeGerente.forEach((s) => addProfile(s.persona, 'gerente'));
+    data.gerenteCom.forEach((d) => addProfile(d.empleado, 'gerente'));
+    data.scopeCoordinador.forEach((s) => addProfile(s.persona, 'coordinador'));
+    data.coordinadorCom.forEach((d) => addProfile(d.empleado, 'coordinador'));
+    data.indicadores.forEach((r) => {
+      addProfile(r.coordinador, 'coordinador');
+      addProfile(r.ejecutivo, 'ejecutivo');
+    });
+    return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  }, [isTrueAdmin, data]);
 
   // Ensure activeTab is valid when role changes
   useEffect(() => {
@@ -1102,7 +1212,14 @@ export default function App() {
         spreadsheetId={spreadsheetId}
         syncing={syncing}
         lastLoadedAt={lastLoadedAt}
-        users={isTrueAdmin ? data?.usuarios || [] : []}
+        users={adminSimulationUsers}
+        usersFromFallback={Boolean(isTrueAdmin && data && data.usuarios.length === 0 && adminSimulationUsers.length > 0)}
+        usersLoading={adminUsersLoading}
+        onReloadUsers={
+          isTrueAdmin && data?.preScoped
+            ? () => void loadAdminExtrasSection('admin')
+            : undefined
+        }
         onRefresh={() => refreshPortalData(spreadsheetId)}
         onOpenDrivePicker={() => setDriveModalOpen(true)}
         onSwitchSession={(next) => {
@@ -1200,7 +1317,7 @@ export default function App() {
                 cortes={data.cortes}
                 scopedRows={scopedIndicadores}
                 scopedDirRows={scopedDirectorioCom}
-                scopes={scopes}
+                scopes={scopedScopes}
                 filters={filters}
                 role={effectiveSession.role}
                 userNombre={effectiveSession.nombre}
@@ -1213,7 +1330,7 @@ export default function App() {
                 cortes={data.cortes}
                 scopedEjRows={scopedEjecutivoCom}
                 scopedDirRows={scopedDirectorioCom}
-                scopes={scopes}
+                scopes={scopedScopes}
                 filters={filters}
                 role={effectiveSession.role}
                 userNombre={effectiveSession.nombre}

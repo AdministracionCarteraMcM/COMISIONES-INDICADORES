@@ -715,15 +715,69 @@ export function scopeWeeklyRows<T extends { region?: string; agencia?: string; e
   return [];
 }
 
+export interface RoleScopes {
+  coordinador: ScopeEntry[];
+  gerente: ScopeEntry[];
+  regional: ScopeEntry[];
+}
+
+export function scopeRoleScopes(
+  scopes: RoleScopes,
+  role: Role,
+  nombre: string
+): RoleScopes {
+  if (role === 'admin' || role === 'directivo' || role === 'direccion') {
+    return scopes;
+  }
+  if (role === 'ejecutivo') {
+    return { coordinador: [], gerente: [], regional: [] };
+  }
+  const pk = personKey(nombre);
+  if (role === 'regional') {
+    const selfRegional = scopes.regional.filter((s) => personKey(s.persona) === pk);
+    const allowedRegions = new Set(
+      selfRegional.map((s) => dailyRegionScopeKey(s.region)).filter(Boolean)
+    );
+    return {
+      regional: selfRegional,
+      gerente: scopes.gerente.filter((s) =>
+        allowedRegions.has(dailyRegionScopeKey(s.region))
+      ),
+      coordinador: scopes.coordinador.filter((s) =>
+        allowedRegions.has(dailyRegionScopeKey(s.region))
+      ),
+    };
+  }
+  if (role === 'gerente') {
+    const selfGerente = scopes.gerente.filter((s) => personKey(s.persona) === pk);
+    const allowedPairs = new Set(
+      selfGerente
+        .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+        .filter((k) => k !== '|')
+    );
+    return {
+      regional: [],
+      gerente: selfGerente,
+      coordinador: scopes.coordinador.filter((s) =>
+        allowedPairs.has(`${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+      ),
+    };
+  }
+  if (role === 'coordinador') {
+    return {
+      regional: [],
+      gerente: [],
+      coordinador: scopes.coordinador.filter((s) => personKey(s.persona) === pk),
+    };
+  }
+  return { coordinador: [], gerente: [], regional: [] };
+}
+
 export function scopeDirectorioRows(
   rows: DirectorioRow[],
   role: Role,
   nombre: string,
-  scopes: {
-    coordinador: ScopeEntry[];
-    gerente: ScopeEntry[];
-    regional: ScopeEntry[];
-  }
+  scopes: RoleScopes
 ): DirectorioRow[] {
   if (role === 'admin' || role === 'directivo' || role === 'direccion') return rows;
   if (role === 'ejecutivo') return [];
@@ -733,24 +787,26 @@ export function scopeDirectorioRows(
       scopes.regional
         .filter((s) => personKey(s.persona) === pk)
         .map((s) => dailyRegionScopeKey(s.region))
+        .filter(Boolean)
     );
-    return rows.filter((r) => allowed.has(dailyRegionScopeKey(r.region)));
+    return rows.filter(
+      (r) =>
+        allowed.has(dailyRegionScopeKey(r.region)) &&
+        (r.rol_persona !== 'regional' || personKey(r.empleado) === pk)
+    );
   }
   if (role === 'gerente') {
     const allowed = new Set(
       scopes.gerente
         .filter((s) => personKey(s.persona) === pk)
         .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
-    );
-    const regions = new Set(
-      scopes.gerente
-        .filter((s) => personKey(s.persona) === pk)
-        .map((s) => dailyRegionScopeKey(s.region))
+        .filter((k) => k !== '|')
     );
     return rows.filter(
       (r) =>
-        allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`) ||
-        (r.rol_persona === 'regional' && regions.has(dailyRegionScopeKey(r.region)))
+        allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`) &&
+        (r.rol_persona === 'coordinador' ||
+          (r.rol_persona === 'gerente' && personKey(r.empleado) === pk))
     );
   }
   if (role === 'coordinador') {
@@ -758,9 +814,13 @@ export function scopeDirectorioRows(
       scopes.coordinador
         .filter((s) => personKey(s.persona) === pk)
         .map((s) => `${dailyRegionScopeKey(s.region)}|${normText(s.agencia)}`)
+        .filter((k) => k !== '|')
     );
-    return rows.filter((r) =>
-      allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`)
+    return rows.filter(
+      (r) =>
+        r.rol_persona === 'coordinador' &&
+        personKey(r.empleado) === pk &&
+        allowed.has(`${dailyRegionScopeKey(r.region)}|${normText(r.agencia)}`)
     );
   }
   return [];
@@ -1824,21 +1884,42 @@ export function resolveStaffSearchScope(
     coordinador?: ScopeEntry[];
     gerente?: ScopeEntry[];
     regional?: ScopeEntry[];
-  }
+  },
+  activeFilters?: { region?: string; agencia?: string }
 ): ResolvedStaffScope | null {
   const clean = query.trim();
   if (!clean) return null;
   const qPk = personKey(clean);
   if (!qPk) return null;
 
+  const filterRegion = activeFilters?.region && activeFilters.region !== 'ALL' ? activeFilters.region : '';
+  const filterAgencia = activeFilters?.agencia && activeFilters.agencia !== 'ALL' ? normText(activeFilters.agencia) : '';
+
+  const entryMatchesActiveFilters = (
+    role: 'regional' | 'gerente' | 'coordinador',
+    region: string | undefined,
+    agencia: string | undefined
+  ) => {
+    if (filterRegion && !regionMatchesFilter(region, filterRegion)) return false;
+    if (filterAgencia && role !== 'regional' && normText(agencia) !== filterAgencia) {
+      return false;
+    }
+    return true;
+  };
+
   const tryResolveForRole = (
     role: 'regional' | 'gerente' | 'coordinador',
     scopeList: ScopeEntry[]
   ): ResolvedStaffScope | null => {
-    const exactDir = dirRows.filter(
-      (r) => r.rol_persona === role && personKey(r.empleado) === qPk
+    const eligibleDir = dirRows.filter(
+      (r) => r.rol_persona === role && entryMatchesActiveFilters(role, r.region, r.agencia)
     );
-    const exactScope = scopeList.filter((s) => personKey(s.persona) === qPk);
+    const eligibleScopes = scopeList.filter((s) =>
+      entryMatchesActiveFilters(role, s.region, s.agencia)
+    );
+
+    const exactDir = eligibleDir.filter((r) => personKey(r.empleado) === qPk);
+    const exactScope = eligibleScopes.filter((s) => personKey(s.persona) === qPk);
 
     let targetPk = qPk;
     let matchedName = clean.toUpperCase();
@@ -1848,12 +1929,12 @@ export function resolveStaffSearchScope(
     // If no exact match, check unique partial match when typing a name (at least 4 chars)
     if (!exactDir.length && !exactScope.length && qPk.length >= 4) {
       const candidateNames = new Map<string, string>();
-      dirRows.forEach((r) => {
-        if (r.rol_persona === role && personKey(r.empleado).includes(qPk)) {
+      eligibleDir.forEach((r) => {
+        if (personKey(r.empleado).includes(qPk)) {
           candidateNames.set(personKey(r.empleado), r.empleado);
         }
       });
-      scopeList.forEach((s) => {
+      eligibleScopes.forEach((s) => {
         if (personKey(s.persona).includes(qPk)) {
           candidateNames.set(personKey(s.persona), s.persona);
         }
@@ -1862,10 +1943,8 @@ export function resolveStaffSearchScope(
         const [onlyPk, onlyName] = Array.from(candidateNames.entries())[0];
         targetPk = onlyPk;
         matchedName = onlyName;
-        matchedDir = dirRows.filter(
-          (r) => r.rol_persona === role && personKey(r.empleado) === targetPk
-        );
-        matchedScopes = scopeList.filter((s) => personKey(s.persona) === targetPk);
+        matchedDir = eligibleDir.filter((r) => personKey(r.empleado) === targetPk);
+        matchedScopes = eligibleScopes.filter((s) => personKey(s.persona) === targetPk);
       }
     } else if (exactDir.length || exactScope.length) {
       matchedName = exactDir[0]?.empleado || exactScope[0]?.persona || matchedName;

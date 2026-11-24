@@ -28,6 +28,7 @@ import {
   personKey,
   scopeDailyRows,
   scopeDirectorioRows,
+  scopeRoleScopes,
   scopeWeeklyRows,
   serialToDate,
   type ParsedDailyWorkbook,
@@ -213,6 +214,7 @@ function scopeDataClientFallback(
     gerente: raw.scopeGerente,
     regional: raw.scopeRegional,
   };
+  const scopedScopes = scopeRoleScopes(scopes, role, nombre);
   return {
     ...raw,
     sheetMeta: isAdmin ? raw.sheetMeta : [],
@@ -227,7 +229,7 @@ function scopeDataClientFallback(
         ? scopeDirectorioRows(raw.gerenteCom, role, nombre, scopes)
         : [],
     regionalCom:
-      role === 'gerente' || role === 'regional' || isPrivilegedMonthly
+      role === 'regional' || isPrivilegedMonthly
         ? scopeDirectorioRows(raw.regionalCom, role, nombre, scopes)
         : [],
     usuarios: isAdmin
@@ -239,12 +241,9 @@ function scopeDataClientFallback(
         }))
       : [],
     scopeEjecutivo: isAdmin ? raw.scopeEjecutivo : [],
-    scopeCoordinador:
-      isPrivilegedMonthly || role === 'coordinador' ? raw.scopeCoordinador : [],
-    scopeGerente:
-      isPrivilegedMonthly || role === 'gerente' ? raw.scopeGerente : [],
-    scopeRegional:
-      isPrivilegedMonthly || role === 'regional' ? raw.scopeRegional : [],
+    scopeCoordinador: scopedScopes.coordinador,
+    scopeGerente: scopedScopes.gerente,
+    scopeRegional: scopedScopes.regional,
     diarios: scopeDailyRows(
       raw.diarios,
       role,
@@ -642,9 +641,33 @@ async function appsScriptPortalFallback(params: {
       regionalCom,
       usuarios: [],
       scopeEjecutivo: [],
-      scopeCoordinador: isPrivileged || role === 'coordinador' ? mkScopes(coordinadorCom, false) : [],
-      scopeGerente: isPrivileged || role === 'gerente' ? mkScopes(gerenteCom, false) : [],
-      scopeRegional: isPrivileged || role === 'regional' ? mkScopes(regionalCom, true) : [],
+      scopeCoordinador:
+        isPrivileged || role === 'regional' || role === 'gerente' || role === 'coordinador'
+          ? mkScopes(
+              role === 'coordinador'
+                ? coordinadorCom.filter((r) => personKey(r.empleado) === personKey(nombre))
+                : coordinadorCom,
+              false
+            )
+          : [],
+      scopeGerente:
+        isPrivileged || role === 'regional' || role === 'gerente'
+          ? mkScopes(
+              role === 'gerente'
+                ? gerenteCom.filter((r) => personKey(r.empleado) === personKey(nombre))
+                : gerenteCom,
+              false
+            )
+          : [],
+      scopeRegional:
+        isPrivileged || role === 'regional'
+          ? mkScopes(
+              role === 'regional'
+                ? regionalCom.filter((r) => personKey(r.empleado) === personKey(nombre))
+                : regionalCom,
+              true
+            )
+          : [],
       diariosHeaders: [],
       diarios: [],
       normalidadRaw: [],
@@ -921,12 +944,18 @@ export async function fetchPortalAdminExtras(role: Role): Promise<{
   if (!activeMcMSessionToken && directAppsScriptToken) {
     const token = directAppsScriptToken;
     const [usuarios, backups] = await Promise.all([
-      callAppsScriptClient<{ users?: Record<string, unknown>[] }>({
-        action: 'admin_users',
-        session_token: token,
-      })
+      callAppsScriptClient<{
+        users?: Record<string, unknown>[];
+        usuarios?: Record<string, unknown>[];
+      }>(
+        {
+          action: 'admin_users',
+          session_token: token,
+        },
+        55_000
+      )
         .then((r) =>
-          (r.users || [])
+          (r.users || r.usuarios || [])
             .map((u) => ({
               username: String(u.username ?? '').trim().toLowerCase(),
               role: normalizeRoleFromScript(u.role),
@@ -938,10 +967,13 @@ export async function fetchPortalAdminExtras(role: Role): Promise<{
             .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
         )
         .catch(() => []),
-      callAppsScriptClient<{ backups?: Record<string, unknown>[] }>({
-        action: 'list_backups',
-        session_token: token,
-      })
+      callAppsScriptClient<{ backups?: Record<string, unknown>[] }>(
+        {
+          action: 'list_backups',
+          session_token: token,
+        },
+        30_000
+      )
         .then((r) =>
           (r.backups || []).map((b, idx) => ({
             sheetId: idx + 1,
@@ -967,7 +999,7 @@ export async function fetchPortalAdminExtras(role: Role): Promise<{
     empty?: boolean;
     usuarios?: UserRecord[];
     backups?: BackupInfo[];
-  }>('/api/portal/admin-extras', { credentials: 'include', headers }, 0, 25_000);
+  }>('/api/portal/admin-extras', { credentials: 'include', headers }, 0, 60_000);
   if (!res.ok || res.data.empty) return null;
   return {
     usuarios: res.data.usuarios || [],

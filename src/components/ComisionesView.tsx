@@ -118,8 +118,12 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
   );
 
   const resolvedStaff = useMemo(
-    () => resolveStaffSearchScope(filters.ejecutivo, scopedDirRows, scopes),
-    [filters.ejecutivo, scopedDirRows, scopes]
+    () =>
+      resolveStaffSearchScope(filters.ejecutivo, scopedDirRows, scopes, {
+        region: filters.region,
+        agencia: filters.agencia,
+      }),
+    [filters.ejecutivo, filters.region, filters.agencia, scopedDirRows, scopes]
   );
 
   const hierarchyFilteredAll = useMemo(() => {
@@ -1165,28 +1169,43 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
               <div className="flex flex-wrap items-center gap-1 pl-2 border-l border-slate-200">
                 {(
                   [
-                    { id: 'ALL', label: 'Todos' },
-                    { id: 'regional', label: `Regionales (${dirCounts.regional.count})` },
-                    { id: 'gerente', label: `Gerentes (${dirCounts.gerente.count})` },
+                    { id: 'ALL', label: 'Todos', show: true },
+                    {
+                      id: 'regional',
+                      label: `Regionales (${dirCounts.regional.count})`,
+                      show:
+                        role === 'admin' ||
+                        role === 'directivo' ||
+                        role === 'direccion' ||
+                        role === 'regional',
+                    },
+                    {
+                      id: 'gerente',
+                      label: `Gerentes (${dirCounts.gerente.count})`,
+                      show: role !== 'coordinador',
+                    },
                     {
                       id: 'coordinador',
                       label: `Coordinadores (${dirCounts.coordinador.count})`,
+                      show: true,
                     },
                   ] as const
-                ).map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setDirRoleFilter(item.id)}
-                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                      dirRoleFilter === item.id
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                )
+                  .filter((item) => item.show)
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setDirRoleFilter(item.id)}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                        dirRoleFilter === item.id
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
               </div>
             )}
           </div>

@@ -55,6 +55,9 @@ interface LayoutProps {
   syncing: boolean;
   lastLoadedAt: string;
   users: UserRecord[];
+  usersFromFallback?: boolean;
+  usersLoading?: boolean;
+  onReloadUsers?: () => void;
   onRefresh: () => void;
   onOpenDrivePicker: () => void;
   onSwitchSession: (next: PortalSession) => void;
@@ -75,6 +78,9 @@ export const Layout: React.FC<LayoutProps> = ({
   syncing,
   lastLoadedAt,
   users,
+  usersFromFallback = false,
+  usersLoading = false,
+  onReloadUsers,
   onRefresh,
   onOpenDrivePicker,
   onSwitchSession,
@@ -91,13 +97,21 @@ export const Layout: React.FC<LayoutProps> = ({
   );
   const activeNav = NAV_ITEMS.find((n) => n.id === activeTab) || NAV_ITEMS[0];
 
+  const normSearch = (v: string) =>
+    v
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
   const filteredUsers = users.filter((u) => {
-    const q = userSearch.trim().toLowerCase();
+    const q = normSearch(userSearch.trim());
     if (!q) return true;
+    const roleLabel = ROLE_LABELS[u.role] || u.role;
     return (
-      u.nombre.toLowerCase().includes(q) ||
-      u.username.toLowerCase().includes(q) ||
-      u.role.toLowerCase().includes(q)
+      normSearch(u.nombre).includes(q) ||
+      normSearch(u.username).includes(q) ||
+      normSearch(u.role).includes(q) ||
+      normSearch(roleLabel).includes(q)
     );
   });
 
@@ -194,7 +208,12 @@ export const Layout: React.FC<LayoutProps> = ({
           <div className="grid grid-cols-2 gap-1.5">
             <button
               type="button"
-              onClick={() => setProfileModalOpen(true)}
+              onClick={() => {
+                setProfileModalOpen(true);
+                if ((users.length === 0 || usersFromFallback) && onReloadUsers && !usersLoading) {
+                  onReloadUsers();
+                }
+              }}
               className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"
             >
               <UserCog className="w-3.5 h-3.5 text-slate-500" />
@@ -368,13 +387,32 @@ export const Layout: React.FC<LayoutProps> = ({
                   type="text"
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Buscar por nombre, usuario o rol en USUARIOS..."
+                  placeholder="Buscar por nombre, usuario o rol (ej. gerente, regional)..."
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
 
+              {(usersLoading || usersFromFallback) && (
+                <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600 flex items-center justify-between gap-2">
+                  <span>
+                    {usersLoading
+                      ? 'Cargando catálogo completo de la hoja USUARIOS...'
+                      : 'Mostrando perfiles detectados en alcances mientras se sincroniza USUARIOS.'}
+                  </span>
+                  {onReloadUsers && !usersLoading && (
+                    <button
+                      type="button"
+                      onClick={onReloadUsers}
+                      className="text-blue-600 font-semibold hover:underline shrink-0"
+                    >
+                      Reintentar
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-64 overflow-y-auto">
-                {filteredUsers.slice(0, 60).map((u) => (
+                {filteredUsers.slice(0, 80).map((u) => (
                   <button
                     key={`${u.username}-${u.role}`}
                     type="button"
@@ -392,7 +430,9 @@ export const Layout: React.FC<LayoutProps> = ({
                   >
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-slate-900 truncate">{u.nombre}</p>
-                      <p className="text-[11px] text-slate-500 font-mono">{u.username}</p>
+                      <p className="text-[11px] text-slate-500 font-mono">
+                        {u.username.includes(':') ? 'Alcance detectado' : u.username}
+                      </p>
                     </div>
                     <span className="px-2 py-0.5 text-[10px] font-semibold uppercase rounded bg-slate-100 text-slate-700 shrink-0">
                       {ROLE_LABELS[u.role] || u.role}
@@ -401,7 +441,9 @@ export const Layout: React.FC<LayoutProps> = ({
                 ))}
                 {filteredUsers.length === 0 && (
                   <p className="py-6 text-center text-xs text-slate-500">
-                    No se encontraron usuarios en la hoja USUARIOS.
+                    {usersLoading && users.length === 0
+                      ? 'Cargando usuarios...'
+                      : 'No se encontraron usuarios que coincidan con la búsqueda.'}
                   </p>
                 )}
               </div>
