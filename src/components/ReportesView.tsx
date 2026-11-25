@@ -13,6 +13,12 @@ import {
   regionDisplayName,
 } from '../utils/mcmData';
 import { GroupedBarChart, HorizontalBarChart, TrendLineChart } from './Charts';
+import {
+  BranchStatusIcon,
+  CashCollectionIcon,
+  NormalityShieldIcon,
+  PromissoryNoteIcon,
+} from './KpiIcons';
 
 interface ReportesViewProps {
   normalidadRaw: NormalidadRawRow[];
@@ -450,8 +456,11 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
       {/* 6 KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-slate-500">Normalidad McM</p>
-          <p className="text-xl font-bold text-slate-900 tabular-nums mt-1">
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-slate-500">Normalidad McM</p>
+            <NormalityShieldIcon className="w-5 h-5 shrink-0" />
+          </div>
+          <p className="text-xl font-bold text-slate-900 tabular-nums mt-1.5">
             {fmtPct(report.total.normality)}
           </p>
           <p className="text-[11px] text-slate-400 tabular-nums mt-1">
@@ -459,8 +468,11 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-slate-500">% Recuperación $</p>
-          <p className="text-xl font-bold text-blue-700 tabular-nums mt-1">
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-slate-500">% Recuperación $</p>
+            <CashCollectionIcon className="w-5 h-5 shrink-0" />
+          </div>
+          <p className="text-xl font-bold text-blue-700 tabular-nums mt-1.5">
             {fmtPct(report.total.recovery)}
           </p>
           <p className="text-[11px] text-slate-400 tabular-nums mt-1">
@@ -468,8 +480,11 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-slate-500">$ Esperado Mes</p>
-          <p className="text-xl font-bold text-slate-900 tabular-nums mt-1">
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-slate-500">$ Esperado Mes</p>
+            <PromissoryNoteIcon className="w-5 h-5 shrink-0" />
+          </div>
+          <p className="text-xl font-bold text-slate-900 tabular-nums mt-1.5">
             {fmtMoneyCompact(report.total.expectedAmt)}
           </p>
           <p className="text-[11px] text-red-600 tabular-nums mt-1">
@@ -477,19 +492,28 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-emerald-700 font-medium">Agencias en Verde</p>
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-emerald-700 font-medium">Agencias en Verde</p>
+            <BranchStatusIcon tone="green" className="w-5 h-5 shrink-0" />
+          </div>
           <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">{statusCounts.ok}</p>
           <p className="text-[11px] text-slate-400 mt-1">≥ {verdePct}% normalidad</p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-amber-700 font-medium">Agencias en Ámbar</p>
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-amber-700 font-medium">Agencias en Ámbar</p>
+            <BranchStatusIcon tone="amber" className="w-5 h-5 shrink-0" />
+          </div>
           <p className="text-2xl font-bold text-amber-600 tabular-nums mt-1">{statusCounts.mid}</p>
           <p className="text-[11px] text-slate-400 mt-1">
             {ambarPct}% – {verdePct}%
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <p className="text-xs text-red-700 font-medium">Agencias en Rojo</p>
+          <div className="flex items-center justify-between gap-1.5">
+            <p className="text-xs text-red-700 font-medium">Agencias en Rojo</p>
+            <BranchStatusIcon tone="red" className="w-5 h-5 shrink-0" />
+          </div>
           <p className="text-2xl font-bold text-red-600 tabular-nums mt-1">{statusCounts.bad}</p>
           <p className="text-[11px] text-slate-400 mt-1">&lt; {ambarPct}%</p>
         </div>

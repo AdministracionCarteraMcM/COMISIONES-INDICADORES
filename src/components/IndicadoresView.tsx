@@ -11,6 +11,16 @@ import {
   Shield,
   Trophy,
 } from 'lucide-react';
+import {
+  ActiveClientsIcon,
+  AdvisorTargetIcon,
+  BanknotesBundleIcon,
+  CashCollectionIcon,
+  CreditContractsIcon,
+  NormalityShieldIcon,
+  OverduePortfolioIcon,
+  PromissoryNoteIcon,
+} from './KpiIcons';
 import type {
   CorteRow,
   DirectorioRow,
@@ -1253,20 +1263,35 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
 
       {/* Top Summary Cards for Current Selection */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs font-medium text-blue-100 uppercase tracking-wider">Colocación Total</p>
-          <p className="text-2xl font-bold tabular-nums mt-1">{fmtMoneyCompact(kpis.colocacionSemanal || kpis.desembolso)}</p>
-          <p className="text-xs text-blue-100 mt-1">Nuevos: {fmtMoneyShort(kpis.montoNuevos)} · Renov: {fmtMoneyShort(kpis.montoRenov)}</p>
+        <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl p-4 shadow-sm flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-blue-100 uppercase tracking-wider">Colocación Total</p>
+            <p className="text-2xl font-bold tabular-nums mt-1">{fmtMoneyCompact(kpis.colocacionSemanal || kpis.desembolso)}</p>
+            <p className="text-xs text-blue-100 mt-1">Nuevos: {fmtMoneyShort(kpis.montoNuevos)} · Renov: {fmtMoneyShort(kpis.montoRenov)}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+            <BanknotesBundleIcon variant="light" className="w-8 h-8" />
+          </div>
         </div>
-        <div className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs font-medium text-red-100 uppercase tracking-wider">Cartera Vencida (Mora)</p>
-          <p className="text-2xl font-bold tabular-nums mt-1">{fmtMoneyCompact(kpis.moraTotal)}</p>
-          <p className="text-xs text-red-100 mt-1">Índice de mora: {fmtPct(kpis.pctMora)}</p>
+        <div className="bg-gradient-to-br from-red-600 to-rose-700 text-white rounded-xl p-4 shadow-sm flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-red-100 uppercase tracking-wider">Cartera Vencida (Mora)</p>
+            <p className="text-2xl font-bold tabular-nums mt-1">{fmtMoneyCompact(kpis.moraTotal)}</p>
+            <p className="text-xs text-red-100 mt-1">Índice de mora: {fmtPct(kpis.pctMora)}</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+            <OverduePortfolioIcon variant="light" className="w-8 h-8" />
+          </div>
         </div>
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-sm">
-          <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Número de Créditos</p>
-          <p className="text-2xl font-bold tabular-nums mt-1">{fmtNum(kpis.numCreditosTotal)}</p>
-          <p className="text-xs text-slate-300 mt-1">Clientes vigentes en selección</p>
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl p-4 shadow-sm flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-300 uppercase tracking-wider">Número de Créditos</p>
+            <p className="text-2xl font-bold tabular-nums mt-1">{fmtNum(kpis.numCreditosTotal)}</p>
+            <p className="text-xs text-slate-300 mt-1">Clientes vigentes en selección</p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center shrink-0">
+            <CreditContractsIcon variant="light" className="w-8 h-8" />
+          </div>
         </div>
       </div>
 
@@ -1274,12 +1299,17 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-500">
-              Normalidad de Cartera
-            </span>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                <NormalityShieldIcon className="w-6 h-6" />
+              </div>
+              <span className="text-xs font-medium text-slate-600 truncate">
+                Normalidad de Cartera
+              </span>
+            </div>
             <SemaforoBadge pct={kpis.pctNorm} />
           </div>
-          <div className="mt-2 flex items-baseline justify-between gap-2">
+          <div className="mt-2.5 flex items-baseline justify-between gap-2">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtPct(kpis.pctNorm)}
             </span>
@@ -1295,14 +1325,19 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-500">
-              Pagaré Total
-            </span>
-            <span className="text-xs font-semibold text-slate-700 tabular-nums">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0">
+                <PromissoryNoteIcon className="w-6 h-6" />
+              </div>
+              <span className="text-xs font-medium text-slate-600 truncate">
+                Pagaré Total
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-slate-700 tabular-nums shrink-0">
               Mora {fmtPct(kpis.pctMora)}
             </span>
           </div>
-          <div className="mt-2">
+          <div className="mt-2.5">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtMoneyCompact(kpis.totalPagare)}
             </span>
@@ -1314,14 +1349,19 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-500">
-              Cobranza $ Recibida
-            </span>
-            <span className="text-xs font-semibold text-blue-700 tabular-nums">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                <CashCollectionIcon className="w-6 h-6" />
+              </div>
+              <span className="text-xs font-medium text-slate-600 truncate">
+                Cobranza $ Recibida
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-blue-700 tabular-nums shrink-0">
               {fmtPct(kpis.pctRecibido)}
             </span>
           </div>
-          <div className="mt-2">
+          <div className="mt-2.5">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtMoneyCompact(kpis.montoRecibido)}
             </span>
@@ -1332,10 +1372,15 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
-          <span className="text-xs font-medium text-slate-500">
-            Colocación y Desembolsos
-          </span>
-          <div className="mt-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+              <BanknotesBundleIcon className="w-6 h-6" />
+            </div>
+            <span className="text-xs font-medium text-slate-600 truncate">
+              Colocación y Desembolsos
+            </span>
+          </div>
+          <div className="mt-2.5">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtMoneyCompact(kpis.colocacionSemanal || kpis.desembolso)}
             </span>
@@ -1348,10 +1393,15 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
-          <span className="text-xs font-medium text-slate-500">
-            Clientes Vigentes
-          </span>
-          <div className="mt-2 flex items-baseline justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center shrink-0">
+              <ActiveClientsIcon className="w-6 h-6" />
+            </div>
+            <span className="text-xs font-medium text-slate-600 truncate">
+              Clientes Vigentes
+            </span>
+          </div>
+          <div className="mt-2.5 flex items-baseline justify-between">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtNum(kpis.clientesVigentes)}
             </span>
@@ -1366,10 +1416,15 @@ export const IndicadoresView: React.FC<IndicadoresViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
-          <span className="text-xs font-medium text-slate-500">
-            Promedio por Ejecutivo (Pagaré)
-          </span>
-          <div className="mt-2 flex items-baseline justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+              <AdvisorTargetIcon className="w-6 h-6" />
+            </div>
+            <span className="text-xs font-medium text-slate-600 truncate">
+              Promedio por Ejecutivo (Pagaré)
+            </span>
+          </div>
+          <div className="mt-2.5 flex items-baseline justify-between gap-2">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">
               {fmtMoneyShort(kpis.promedioEjecutivo)}
             </span>

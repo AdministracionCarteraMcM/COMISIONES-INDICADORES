@@ -16,6 +16,7 @@ import {
   SemiGaugeChart,
   TrendLineChart,
 } from './Charts';
+import { BanknotesBundleIcon, PaycheckWalletIcon } from './KpiIcons';
 
 interface DiariosViewProps {
   scopedDailyRows: DailyRow[];
@@ -402,16 +403,21 @@ export const DiariosView: React.FC<DiariosViewProps> = ({
           />
           <div className="flex-1 w-full space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Avance de Comisión Real vs Potencial
-                </p>
-                <p className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">
-                  {fmtMoney(metrics.real)}{' '}
-                  <span className="text-xs font-normal text-slate-500">
-                    de {fmtMoney(metrics.potential)}
-                  </span>
-                </p>
+              <div className="flex items-start gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0 mt-0.5">
+                  <PaycheckWalletIcon className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Avance de Comisión Real vs Potencial
+                  </p>
+                  <p className="text-xl font-bold text-slate-900 tabular-nums mt-0.5">
+                    {fmtMoney(metrics.real)}{' '}
+                    <span className="text-xs font-normal text-slate-500">
+                      de {fmtMoney(metrics.potential)}
+                    </span>
+                  </p>
+                </div>
               </div>
               <div className="text-right">
                 <p className="text-[11px] text-slate-500">Oportunidad por capturar</p>
@@ -450,14 +456,19 @@ export const DiariosView: React.FC<DiariosViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between space-y-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Colocación y Proyección Neta
-            </p>
-            <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">
-              {fmtMoney(metrics.neto)}
-            </p>
-            <p className="text-xs text-slate-500">Neto estimado (Com. final - descuentos)</p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Colocación y Proyección Neta
+              </p>
+              <p className="text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+                {fmtMoney(metrics.neto)}
+              </p>
+              <p className="text-xs text-slate-500">Neto estimado (Com. final - descuentos)</p>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+              <BanknotesBundleIcon className="w-7 h-7" />
+            </div>
           </div>
           <div className="space-y-1.5 text-xs border-t border-slate-100 pt-3 tabular-nums">
             <div className="flex justify-between">

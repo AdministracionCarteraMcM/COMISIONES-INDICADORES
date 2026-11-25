@@ -2,13 +2,23 @@ import React, { useMemo, useState } from 'react';
 import {
   Award,
   BarChart3,
+  Building2,
   Download,
   FileSpreadsheet,
   FileText,
+  MapPinned,
   Shield,
   Users,
   Wallet,
 } from 'lucide-react';
+import {
+  BanknotesBundleIcon,
+  BonusTrophyIcon,
+  CashCollectionIcon,
+  DeductionsReceiptIcon,
+  NormalityShieldIcon,
+  PaycheckWalletIcon,
+} from './KpiIcons';
 import type {
   ComisionEjecutivoRow,
   CorteRow,
@@ -759,15 +769,20 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
             }}
             className="text-left bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-4 transition-colors"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-blue-700">
-                Gerentes Regionales
-              </span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 tabular-nums">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                  <MapPinned className="w-4 h-4 text-blue-600" />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-700 truncate">
+                  Gerentes Regionales
+                </span>
+              </div>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 tabular-nums shrink-0">
                 {dirCounts.regional.count}
               </span>
             </div>
-            <p className="text-xl font-bold text-slate-900 mt-1.5 tabular-nums">
+            <p className="text-xl font-bold text-slate-900 mt-2 tabular-nums">
               {fmtMoney(dirCounts.regional.total)}
             </p>
             <p className="text-[11px] text-slate-500 mt-1">
@@ -783,15 +798,20 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
             }}
             className="text-left bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-4 transition-colors"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                Gerentes de Agencia
-              </span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 tabular-nums">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <Building2 className="w-4 h-4 text-slate-700" />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 truncate">
+                  Gerentes de Agencia
+                </span>
+              </div>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 tabular-nums shrink-0">
                 {dirCounts.gerente.count}
               </span>
             </div>
-            <p className="text-xl font-bold text-slate-900 mt-1.5 tabular-nums">
+            <p className="text-xl font-bold text-slate-900 mt-2 tabular-nums">
               {fmtMoney(dirCounts.gerente.total)}
             </p>
             <p className="text-[11px] text-slate-500 mt-1">
@@ -807,15 +827,20 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
             }}
             className="text-left bg-white border border-slate-200 hover:border-blue-300 rounded-xl p-4 transition-colors"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-                Coordinadores
-              </span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 tabular-nums">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                  <Users className="w-4 h-4 text-emerald-600" />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 truncate">
+                  Coordinadores
+                </span>
+              </div>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 tabular-nums shrink-0">
                 {dirCounts.coordinador.count}
               </span>
             </div>
-            <p className="text-xl font-bold text-slate-900 mt-1.5 tabular-nums">
+            <p className="text-xl font-bold text-slate-900 mt-2 tabular-nums">
               {fmtMoney(dirCounts.coordinador.total)}
             </p>
             <p className="text-[11px] text-slate-500 mt-1">
@@ -865,11 +890,16 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
               {fmtMoney(comp.comFinal)}
             </p>
           </div>
-          <div>
-            <p className="text-xs text-slate-500">Total a Cobrar</p>
-            <p className="text-2xl font-bold text-emerald-700">
-              {fmtMoney(comp.totalCobrar)}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center shrink-0">
+              <PaycheckWalletIcon className="w-7 h-7" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Total a Cobrar</p>
+              <p className="text-2xl font-bold text-emerald-700">
+                {fmtMoney(comp.totalCobrar)}
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -877,11 +907,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
       {/* 6-Stage Composition Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              1. Pagos y Normalidad
-            </span>
-            <span className="text-sm font-bold text-slate-900 tabular-nums">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <NormalityShieldIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                1. Pagos y Normalidad
+              </span>
+            </div>
+            <span className="text-sm font-bold text-slate-900 tabular-nums shrink-0">
               {fmtPct(comp.pctNorm)}
             </span>
           </div>
@@ -921,11 +954,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              2. Incentivo Cobranza
-            </span>
-            <span className="text-sm font-bold text-blue-700 tabular-nums">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <CashCollectionIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                2. Incentivo Cobranza
+              </span>
+            </div>
+            <span className="text-sm font-bold text-blue-700 tabular-nums shrink-0">
               {fmtMoneyCompact(comp.cobTotal)}
             </span>
           </div>
@@ -936,11 +972,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              3. Incentivo Colocación
-            </span>
-            <span className="text-sm font-bold text-blue-700 tabular-nums">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <BanknotesBundleIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                3. Incentivo Colocación
+              </span>
+            </div>
+            <span className="text-sm font-bold text-blue-700 tabular-nums shrink-0">
               {fmtMoneyCompact(comp.colPagar)}
             </span>
           </div>
@@ -951,11 +990,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              4. Otros Incentivos
-            </span>
-            <span className="text-sm font-bold text-slate-900 tabular-nums">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <BonusTrophyIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                4. Otros Incentivos
+              </span>
+            </div>
+            <span className="text-sm font-bold text-slate-900 tabular-nums shrink-0">
               {fmtMoneyCompact(comp.otrosTotal)}
             </span>
           </div>
@@ -970,11 +1012,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              5. Descuentos y Préstamos
-            </span>
-            <span className="text-sm font-bold text-red-600 tabular-nums">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <DeductionsReceiptIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                5. Descuentos y Préstamos
+              </span>
+            </div>
+            <span className="text-sm font-bold text-red-600 tabular-nums shrink-0">
               -{fmtMoneyCompact(comp.descTotal)}
             </span>
           </div>
@@ -986,11 +1031,14 @@ export const ComisionesView: React.FC<ComisionesViewProps> = ({
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              6. Cierre y Total a Cobrar
-            </span>
-            <span className="text-sm font-bold text-emerald-700 tabular-nums">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <PaycheckWalletIcon className="w-6 h-6 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 truncate">
+                6. Cierre y Total a Cobrar
+              </span>
+            </div>
+            <span className="text-sm font-bold text-emerald-700 tabular-nums shrink-0">
               {fmtMoneyCompact(comp.totalCobrar)}
             </span>
           </div>
