@@ -1067,8 +1067,8 @@ export function aggregateNormalidadMonth(
   const wa = new Map<string, Acc>();
 
   for (const x of rows) {
-    const kr = x.region;
-    const ka = `${x.region}||${x.agency}`;
+    const kr = regionDisplayName(x.region || 'SIN REGIÓN');
+    const ka = `${kr}||${x.agency}`;
     add(tot, x);
     if (!wk.has(x.date)) wk.set(x.date, blank());
     add(wk.get(x.date)!, x);

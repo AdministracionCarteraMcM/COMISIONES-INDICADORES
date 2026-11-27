@@ -102,7 +102,7 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
       normalidadRaw.filter(
         (r) =>
           (!selectedMonth || r.monthKey === selectedMonth) &&
-          (selectedRegion === 'ALL' || r.region === selectedRegion)
+          (selectedRegion === 'ALL' || regionDisplayName(r.region) === selectedRegion)
       ),
     [normalidadRaw, selectedMonth, selectedRegion]
   );
@@ -113,7 +113,10 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
   );
 
   const availableRegions = useMemo(
-    () => Array.from(new Set(monthAllRegions.map((r) => r.region))).sort(),
+    () =>
+      Array.from(
+        new Set(monthAllRegions.map((r) => regionDisplayName(r.region)).filter(Boolean))
+      ).sort(),
     [monthAllRegions]
   );
 

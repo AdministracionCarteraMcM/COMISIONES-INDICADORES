@@ -74,8 +74,8 @@ export const TrendLineChart: React.FC<{
   return (
     <div className="w-full relative">
       <div className="flex flex-wrap items-center gap-3 mb-2">
-        {series.map((s) => (
-          <div key={s.name} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+        {series.map((s, si) => (
+          <div key={`${s.name}-${si}`} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
             <span
               className="w-2.5 h-2.5 rounded-full inline-block"
               style={{ backgroundColor: s.color }}
@@ -152,7 +152,7 @@ export const TrendLineChart: React.FC<{
           );
         })}
 
-        {series.map((s) => {
+        {series.map((s, si) => {
           const pts: string[] = [];
           s.values.forEach((v, i) => {
             if (v !== null && Number.isFinite(v)) {
@@ -160,7 +160,7 @@ export const TrendLineChart: React.FC<{
             }
           });
           return (
-            <g key={s.name}>
+            <g key={`${s.name}-${si}`}>
               {pts.length > 0 && (
                 <path
                   d={pts.join(' ')}
@@ -217,11 +217,11 @@ export const TrendLineChart: React.FC<{
       {hoverIdx !== null && (
         <div className="mt-1 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs inline-flex flex-wrap items-center gap-3 tabular-nums">
           <span className="font-semibold">{labels[hoverIdx]}</span>
-          {series.map((s) => {
+          {series.map((s, si) => {
             const val = s.values[hoverIdx];
             if (val === null || val === undefined) return null;
             return (
-              <span key={s.name} className="inline-flex items-center gap-1.5">
+              <span key={`${s.name}-${si}`} className="inline-flex items-center gap-1.5">
                 <span
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: s.color }}
@@ -285,8 +285,8 @@ export const GroupedBarChart: React.FC<{
   return (
     <div className="w-full">
       <div className="flex flex-wrap items-center gap-3 mb-2">
-        {seriesNames.map((s) => (
-          <div key={s.name} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+        {seriesNames.map((s, si) => (
+          <div key={`${s.name}-${si}`} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: s.color }} />
             <span>{s.name}</span>
           </div>
@@ -332,7 +332,7 @@ export const GroupedBarChart: React.FC<{
                 const by = padT + plotH - bh;
                 return (
                   <rect
-                    key={v.name}
+                    key={`${v.name}-${bi}`}
                     x={bx}
                     y={by}
                     width={barW}
@@ -360,8 +360,8 @@ export const GroupedBarChart: React.FC<{
       {hoverIdx !== null && items[hoverIdx] && (
         <div className="mt-1 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs inline-flex flex-wrap items-center gap-3 tabular-nums">
           <span className="font-semibold">{items[hoverIdx].label}</span>
-          {items[hoverIdx].values.map((v) => (
-            <span key={v.name}>
+          {items[hoverIdx].values.map((v, bi) => (
+            <span key={`${v.name}-${bi}`}>
               <span className="text-slate-300">{v.name}: </span>
               <span className="font-semibold">
                 {valueFormat === 'money'
