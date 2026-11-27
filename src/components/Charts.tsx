@@ -312,9 +312,12 @@ export const GroupedBarChart: React.FC<{
 
         {items.map((item, gi) => {
           const gx = padL + gi * groupW;
-          const innerW = Math.min(groupW * 0.76, 62);
-          const barW = Math.max(6, innerW / Math.max(1, item.values.length) - 2);
-          const startX = gx + (groupW - innerW) / 2;
+          const barCount = Math.max(1, item.values.length);
+          const barGap = barCount >= 4 && groupW < 64 ? 1.5 : 2;
+          const maxGroupInnerW = Math.min(groupW * 0.8, 62);
+          const barW = Math.max(3.5, (maxGroupInnerW - barGap * (barCount - 1)) / barCount);
+          const actualGroupW = barCount * barW + barGap * (barCount - 1);
+          const startX = gx + (groupW - actualGroupW) / 2;
           const labelX = gx + groupW / 2;
           const labelY = needsRotate ? padT + plotH + 14 : h - 14;
           const maxLblLen = needsRotate ? 16 : 20;
@@ -325,7 +328,7 @@ export const GroupedBarChart: React.FC<{
               {item.values.map((v, bi) => {
                 const safeVal = Math.max(0, v.value);
                 const bh = Math.max(1, (safeVal / (hi || 1)) * plotH);
-                const bx = startX + bi * (barW + 2);
+                const bx = startX + bi * (barW + barGap);
                 const by = padT + plotH - bh;
                 return (
                   <rect

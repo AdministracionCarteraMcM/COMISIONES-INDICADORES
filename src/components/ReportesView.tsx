@@ -39,6 +39,12 @@ const REGION_COLORS = [
   '#EC4899',
   '#14B8A6',
   '#F97316',
+  '#DC2626',
+  '#65A30D',
+  '#6366F1',
+  '#0891B2',
+  '#DB2777',
+  '#CA8A04',
 ];
 
 export const ReportesView: React.FC<ReportesViewProps> = ({
@@ -146,10 +152,8 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
   );
 
   const weeklyTrendSeries = useMemo(() => {
-    const topRegions = [...report.regions]
-      .sort((a, b) => b.expected - a.expected)
-      .slice(0, 6);
-    return topRegions.map((r, idx) => ({
+    const allRegions = [...report.regions].sort((a, b) => b.expected - a.expected);
+    return allRegions.map((r, idx) => ({
       name: regionDisplayName(r.name),
       color: REGION_COLORS[idx % REGION_COLORS.length],
       values: report.weeks.map((w) => report.weeklyRegion.get(`${r.name}||${w.date}`) ?? null),
@@ -160,7 +164,6 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
     () =>
       [...report.regions]
         .sort((a, b) => b.expectedAmt - a.expectedAmt)
-        .slice(0, 8)
         .map((r) => ({
           label: regionDisplayName(r.name),
           values: [
@@ -175,7 +178,6 @@ export const ReportesView: React.FC<ReportesViewProps> = ({
     () =>
       [...report.regions]
         .sort((a, b) => (b.normality || 0) - (a.normality || 0))
-        .slice(0, 8)
         .map((r) => ({
           label: regionDisplayName(r.name),
           values: report.weeks.map((w, idx) => ({
